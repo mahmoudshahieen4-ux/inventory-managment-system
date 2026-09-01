@@ -1,12 +1,18 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 
+/** Available views in the main content area. */
+export type AppView = 'inventory' | 'pos'
+
 interface UIState {
   leftSidebarVisible: boolean
   rightSidebarVisible: boolean
   commandPaletteOpen: boolean
   preferencesOpen: boolean
   lastQuickPaneEntry: string | null
+  activeView: AppView
+  /** True while the initial SQLite load runs on startup (desktop only). */
+  isDbInitializing: boolean
 
   toggleLeftSidebar: () => void
   setLeftSidebarVisible: (visible: boolean) => void
@@ -18,6 +24,8 @@ interface UIState {
   setPreferencesOpen: (open: boolean) => void
   setLastQuickPaneEntry: (text: string) => void
   setSquareCorners: (enabled: boolean) => void
+  setActiveView: (view: AppView) => void
+  setDbInitializing: (initializing: boolean) => void
 }
 
 export const useUIStore = create<UIState>()(
@@ -28,6 +36,8 @@ export const useUIStore = create<UIState>()(
       commandPaletteOpen: false,
       preferencesOpen: false,
       lastQuickPaneEntry: null,
+      activeView: 'inventory',
+      isDbInitializing: false,
 
       toggleLeftSidebar: () =>
         set(
@@ -83,6 +93,16 @@ export const useUIStore = create<UIState>()(
       setSquareCorners: (enabled: boolean) => {
         document.documentElement.classList.toggle('square-corners', enabled)
       },
+
+      setActiveView: view =>
+        set({ activeView: view }, undefined, 'setActiveView'),
+
+      setDbInitializing: initializing =>
+        set(
+          { isDbInitializing: initializing },
+          undefined,
+          'setDbInitializing'
+        ),
     }),
     {
       name: 'ui-store',

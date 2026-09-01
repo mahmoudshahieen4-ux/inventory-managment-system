@@ -1,6 +1,39 @@
 import '@testing-library/jest-dom'
 import { vi } from 'vitest'
 
+// jsdom does not implement the Pointer Capture API, but Radix UI primitives
+// (e.g. Select) call it inside their pointer event handlers. Provide no-op
+// polyfills so those components can be tested.
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = function (_pointerId: number): boolean {
+    return false
+  }
+}
+
+if (!Element.prototype.setPointerCapture) {
+  Element.prototype.setPointerCapture = function (_pointerId: number): void {
+    // No-op: jsdom does not support real pointer capture.
+  }
+}
+
+if (!Element.prototype.releasePointerCapture) {
+  Element.prototype.releasePointerCapture = function (
+    _pointerId: number
+  ): void {
+    // No-op: jsdom does not support real pointer capture.
+  }
+}
+
+// Radix UI primitives (e.g. Select) call `scrollIntoView` to keep the active
+// item in view. jsdom does not implement it, so provide a no-op polyfill.
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = function (
+    _arg?: boolean | ScrollIntoViewOptions
+  ): void {
+    // No-op: jsdom does not support scrolling.
+  }
+}
+
 // Mock matchMedia for tests
 Object.defineProperty(window, 'matchMedia', {
   writable: true,

@@ -7,9 +7,9 @@ import App from './App'
 describe('App', () => {
   it('renders main window layout', () => {
     render(<App />)
-    expect(
-      screen.getByRole('heading', { name: /hello world/i })
-    ).toBeInTheDocument()
+    // "Inventory" appears in both the view switcher and the inventory view title
+    expect(screen.getAllByText('Inventory').length).toBeGreaterThan(0)
+    expect(screen.getByText('POS')).toBeInTheDocument()
   })
 
   it('renders title bar with traffic light buttons', () => {

@@ -141,3 +141,27 @@ Task-focused agents that leverage separate context for focused work:
 
 - `cleanup-analyzer` - Analyze static analysis output (used by `/cleanup`)
 - `userguide-reviewer` - Review user guide against actual system features
+
+
+I am building a POS and Inventory Desktop Application using Tauri v2, React, TypeScript, Tailwind CSS, and Shadcn UI.
+
+Act as a Senior Full-Stack Engineer and help me build this feature step-by-step.
+
+### Requirements:
+1. **Local Database Setup:** Set up SQLite (or local JSON state / Zustand store for local persistence) to manage products and sales.
+2. **Inventory Management Table:**
+   - Create a product table displaying: Code, Name, Quantity, Min Threshold, Purchase Price, Selling Price, and Actions (Edit/Delete).
+   - Implement Alert Color Logic:
+     - Row/Badge in RED (`#EF4444`) if `quantity <= 0` (Out of Stock).
+     - Row/Badge in YELLOW (`#F59E0B`) if `0 < quantity <= min_threshold` (Low Stock).
+     - Row/Badge in Normal/Green if `quantity > min_threshold`.
+3. **Role-Based Authorization (RBAC):**
+   - Create a store for Auth State with roles: 'ADMIN' and 'CASHIER'.
+   - 'ADMIN' has full access (Add/Edit/Delete products, change prices, view dashboard).
+   - 'CASHIER' can only access the POS Sales screen, search products, add to cart, checkout, and view inventory without edit rights.
+4. **POS & Invoice Generation:**
+   - Create a sales checkout screen.
+   - Deduction: Submitting a sale must immediately deduct item quantities from the inventory.
+   - Include a simple modal to view and trigger browser/receipt printing (`window.print()` or `react-to-print`).
+
+Please start by setting up the Data Types/Interfaces for Product, CartItem, Sale, and User, and then build the Inventory Table component with the custom color alerts.

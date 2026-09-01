@@ -22,7 +22,7 @@
 
   body {
     @apply text-foreground;
-    font-family: -apple-system, 'Segoe UI', 'Roboto', sans-serif;
+    font-family: 'Inter Variable', -apple-system, 'Segoe UI', sans-serif;
     font-size: 16px;
     line-height: 1.6;
     -webkit-font-smoothing: antialiased;
@@ -62,5 +62,46 @@
   *[data-tauri-drag-region] {
     -webkit-app-region: drag;
     app-region: drag;
+  }
+}
+
+/* Print styles: when printing (POS receipt), only the receipt area stays visible */
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+
+  .receipt-print-area,
+  .receipt-print-area * {
+    visibility: visible !important;
+  }
+
+  .receipt-print-area {
+    position: absolute !important;
+    inset-block-start: 0 !important;
+    inset-inline-start: 0 !important;
+    width: 100% !important;
+  }
+}
+
+/* Redesign: subtle entrance animation for main containers */
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in-up 0.3s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in {
+    animation: none;
   }
 }

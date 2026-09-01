@@ -161,6 +161,32 @@ This app uses React Compiler which automatically handles memoization. You do **n
 - Feature flags and configuration
 - Temporary workflow state
 
+**Auth/RBAC store** - `useAuthStore` (see `src/store/useAuthStore.ts`):
+
+- Holds the current active user role (`'ADMIN' | 'CASHIER'`), defaulting to `ADMIN`
+- Exposes `setRole(role)` and `toggleRole()`; consumer UI (e.g., the titlebar role switch) can flip roles for testing RBAC
+- Components gate actions by selecting `useAuthStore(state => state.role)` and comparing against the role they require (e.g., `role === 'ADMIN'`)
+
+**Inventory store** - `useInventoryStore` (see `src/store/useInventoryStore.ts`):
+
+- Holds the products list with seeded demo data covering every stock status
+- Exposes `addProduct`, `updateProduct`, and `deleteProduct` (all immutable updates)
+- Pure `getStockStatus(quantity, minThreshold)` lives in `src/lib/stock-status.ts` for row/badge alert logic
+- Form modals call `addProduct`/`updateProduct`; delete confirmations call `deleteProduct`
+
+**Cart store** - `useCartStore` (see `src/store/useCartStore.ts`):
+
+- Ephemeral POS session state: current sale lines (`items: CartItem[]`)
+- Exposes `addToCart(product)` (stock-capped, no-op when out of stock), `removeFromCart`, `updateQuantity` (clamped, 0 removes the line), and `clearCart`
+- Totals come from pure selectors — `selectCartSubtotal`, `selectCartTax`, `selectCartTotal` (pass `useCartStore.getState()` inside callbacks, or use them as zustand selectors in components); `TAX_RATE` and `roundMoney` are exported for reuse
+- Checkout flows read actions via `useCartStore.getState()` so they run once per event, not per render
+
+**Sales store** - `useSalesStore` (see `src/store/useSalesStore.ts`):
+
+- Completed transaction log: `sales: Sale[]`, newest first, each with a sequential `invoiceNumber` (`INV-0001`…)
+- `addSale(sale)` generates the `id` (`crypto.randomUUID()`), the `invoiceNumber` and the `createdAt` timestamp, prepends the record, and returns it (so callers can hand it to a receipt modal)
+- `getSaleById(id)` retrieves a stored invoice for re-printing from sales history
+
 ## Adding a New Store
 
 1. Create store file in `src/store/`
@@ -173,3 +199,39 @@ rule:
     - pattern: const { $$$PROPS } = useUIStore($$$ARGS)
     - pattern: const { $$$PROPS } = useNewStore($$$ARGS) # Add new store
 ```
+
+## Local Persistence (SQLite)
+
+Stores persist through `src/services/db.ts`, a thin layer over `tauri-plugin-sql`
+(`sqlite:pos.db`, registered in `src-tauri/src/lib.rs`, permission `sql:default`).
+
+- **Runtime guard**: every call site checks `isTauriRuntime()` — in the browser
+  and unit tests the layer is a no-op, so stores keep working unchanged.
+- **Store contract**: async `hydrate()` loads stored rows on startup (seeding on
+  first launch); mutations update local state first, then fire-and-forget the
+  SQL write via the `persist()` helper — failures toast `db.toast.saveFailed`.
+- **Bootstrap**: `useAppBootstrap()` (mounted in `MainWindowContent`) runs both
+  `hydrate()`s while `useUIStore.isDbInitializing` shows a full-area spinner.
+- **Schema**: `products`, `sales`, `sale_items` (see `db.ts` migrations); rows
+  map snake_case ↔ camelCase at the boundary only.
+
+## Licensing & Trial (License Store)
+
+`useLicenseStore` persists a single `license` row (key, status, activation,
+expiration, plus `first_run_date` / `trial_expiration_date` / `last_active_time`).
+
+- **Statuses**: `ACTIVE` | `TRIAL` | `EXPIRED` | `UNREGISTERED`.
+- **Auto 3-day trial**: first launch (no stored row) creates a TRIAL record
+  anchored at `firstRunDate` with `trialExpirationDate = firstRunDate + 3 days`.
+  Legacy rows without trial fields only start a trial when UNREGISTERED/TRIAL —
+  an existing ACTIVE or EXPIRED license is never overwritten.
+- **Clock anti-cheat**: `runExpirationCheck()` (startup + hourly, via
+  `useLicenseGuard`) detects `now < lastActiveTime` → status `EXPIRED` and locks.
+  It also pulses `lastActiveTime = now` on every check so rollbacks are always
+  detectable once the DB was written to.
+- **Trial banner**: `TrialBanner` shows while `status === 'TRIAL'` (remaining
+  days/hours + Buy Now/Activate); `LicenseLockModal` accepts an optional
+  `onClose` so the banner can reuse it as a dismissable overlay.
+- **Testing tip**: store trial logic lives behind `isTauriRuntime()`. Mock
+  `@/services/db` (see `useLicenseStore.trial.test.ts`) to exercise the SQLite
+  paths in jsdom — the dev bypass otherwise forces `ACTIVE` for browser/tests.

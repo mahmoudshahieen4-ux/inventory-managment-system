@@ -9,6 +9,8 @@ describe('UIStore', () => {
       rightSidebarVisible: true,
       commandPaletteOpen: false,
       preferencesOpen: false,
+      activeView: 'inventory',
+      isDbInitializing: false,
     })
   })
 
@@ -18,6 +20,7 @@ describe('UIStore', () => {
     expect(state.rightSidebarVisible).toBe(true)
     expect(state.commandPaletteOpen).toBe(false)
     expect(state.preferencesOpen).toBe(false)
+    expect(state.activeView).toBe('inventory')
   })
 
   it('toggles left sidebar visibility', () => {
@@ -58,5 +61,25 @@ describe('UIStore', () => {
 
     toggleCommandPalette()
     expect(useUIStore.getState().commandPaletteOpen).toBe(false)
+  })
+
+  it('sets the active view between inventory and pos', () => {
+    const { setActiveView } = useUIStore.getState()
+
+    setActiveView('pos')
+    expect(useUIStore.getState().activeView).toBe('pos')
+
+    setActiveView('inventory')
+    expect(useUIStore.getState().activeView).toBe('inventory')
+  })
+
+  it('toggles the database initializing flag', () => {
+    const { setDbInitializing } = useUIStore.getState()
+
+    setDbInitializing(true)
+    expect(useUIStore.getState().isDbInitializing).toBe(true)
+
+    setDbInitializing(false)
+    expect(useUIStore.getState().isDbInitializing).toBe(false)
   })
 })

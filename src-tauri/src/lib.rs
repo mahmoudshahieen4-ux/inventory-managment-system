@@ -60,6 +60,7 @@ pub fn run() {
     app_builder = app_builder
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin({
             #[allow(unused_mut)]
             let mut targets = vec![

@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { useUIStore } from '@/store/ui-store'
+import { useAuthStore } from '@/store/useAuthStore'
 import { executeCommand, useCommandContext } from '@/lib/commands'
 import {
   PanelLeft,
@@ -8,6 +9,8 @@ import {
   PanelRight,
   PanelRightClose,
   Settings,
+  Shield,
+  ShieldCheck,
 } from 'lucide-react'
 
 /**
@@ -43,6 +46,34 @@ export function TitleBarLeftActions() {
 }
 
 /**
+ * Role switch control shown in the title bar.
+ * Toggles between ADMIN and CASHIER for testing RBAC.
+ */
+export function RoleToggle() {
+  const { t } = useTranslation()
+  const role = useAuthStore(state => state.role)
+  const toggleRole = useAuthStore(state => state.toggleRole)
+  const isAdmin = role === 'ADMIN'
+  const roleLabel = isAdmin ? t('auth.role.admin') : t('auth.role.cashier')
+  const targetLabel = isAdmin ? t('auth.role.cashier') : t('auth.role.admin')
+  const RoleIcon = isAdmin ? ShieldCheck : Shield
+
+  return (
+    <Button
+      onClick={toggleRole}
+      variant="ghost"
+      size="sm"
+      className="h-6 gap-1 text-foreground/70 hover:text-foreground"
+      aria-label={t('auth.toggleTo', { role: targetLabel })}
+      title={t('auth.toggleTo', { role: targetLabel })}
+    >
+      <RoleIcon className="size-3.5" />
+      <span>{roleLabel}</span>
+    </Button>
+  )
+}
+
+/**
  * Right-side toolbar actions (settings, sidebar toggle).
  * Place this before window controls on Windows, or at the end on macOS/Linux.
  */
@@ -61,6 +92,8 @@ export function TitleBarRightActions() {
 
   return (
     <div className="flex items-center gap-1">
+      <RoleToggle />
+
       <Button
         onClick={handleOpenPreferences}
         variant="ghost"
