@@ -31,3 +31,12 @@ input {
   -webkit-user-select: text !important;
   cursor: text !important;
 }
+@layer utilities {
+  body::-webkit-scrollbar {
+    display: none;
+  }
+  body {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}

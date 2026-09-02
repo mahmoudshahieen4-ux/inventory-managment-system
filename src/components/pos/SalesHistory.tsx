@@ -26,7 +26,7 @@ export function SalesHistory({ onReprint }: SalesHistoryProps) {
   }
 
   return (
-    <ul className="min-h-0 flex-1 space-y-3 overflow-y-auto pb-1">
+    <ul className="min-h-0 w-full min-w-0 flex-1 space-y-3 overflow-y-auto overflow-x-hidden pb-1">
       {sales.map(sale => (
         <li
           key={sale.id}

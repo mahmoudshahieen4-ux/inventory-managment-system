@@ -42,6 +42,7 @@ function getDb(): Promise<Database> {
           id TEXT PRIMARY KEY,
           invoice_number TEXT NOT NULL,
           total_amount REAL NOT NULL,
+          total_profit REAL NOT NULL DEFAULT 0,
           cashier_name TEXT NOT NULL,
           created_at TEXT NOT NULL
         )
@@ -53,10 +54,18 @@ function getDb(): Promise<Database> {
           product_id TEXT NOT NULL,
           product_name TEXT NOT NULL,
           quantity INTEGER NOT NULL,
+          purchase_price REAL NOT NULL DEFAULT 0,
           unit_price REAL NOT NULL,
           total_price REAL NOT NULL
+          profit REAL NOT NULL DEFAULT 0
         )
       `)
+      await db.execute(`CREATE TABLE IF NOT EXISTS daily_summaries (
+        summary_date TEXT PRIMARY KEY,
+        revenue REAL NOT NULL DEFAULT 0,
+        profit REAL NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
+      )`)
       await db.execute(
         'CREATE INDEX IF NOT EXISTS idx_sale_items_sale_id ON sale_items(sale_id)'
       )
@@ -79,6 +88,27 @@ function getDb(): Promise<Database> {
         })
       await db
         .execute('ALTER TABLE products ADD COLUMN units_per_carton INTEGER')
+        .catch(() => {
+          // Column already exists — nothing to do.
+        })
+      await db
+        .execute(
+          'ALTER TABLE sales ADD COLUMN total_profit REAL NOT NULL DEFAULT 0'
+        )
+        .catch(() => {
+          // Column already exists — nothing to do.
+        })
+      await db
+        .execute(
+          'ALTER TABLE sale_items ADD COLUMN purchase_price REAL NOT NULL DEFAULT 0'
+        )
+        .catch(() => {
+          // Column already exists — nothing to do.
+        })
+      await db
+        .execute(
+          'ALTER TABLE sale_items ADD COLUMN profit REAL NOT NULL DEFAULT 0'
+        )
         .catch(() => {
           // Column already exists — nothing to do.
         })
@@ -207,6 +237,7 @@ interface SaleRow {
   id: string
   invoice_number: string
   total_amount: number
+  total_profit: number
   cashier_name: string
   created_at: string
 }
@@ -217,28 +248,39 @@ interface SaleItemRow {
   product_id: string
   product_name: string
   quantity: number
+  purchase_price: number
   unit_price: number
   total_price: number
+  profit: number
 }
 
 /** Inserts the invoice header and its item lines. */
 export async function persistSale(sale: Sale): Promise<void> {
   const db = await getDb()
   await db.execute(
-    'INSERT INTO sales (id, invoice_number, total_amount, cashier_name, created_at) VALUES ($1, $2, $3, $4, $5)',
-    [sale.id, sale.invoiceNumber, sale.total, sale.cashierId, sale.createdAt]
+    'INSERT INTO sales (id, invoice_number, total_amount, total_profit, cashier_name, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
+    [
+      sale.id,
+      sale.invoiceNumber,
+      sale.total,
+      sale.totalProfit ?? 0,
+      sale.cashierId,
+      sale.createdAt,
+    ]
   )
   for (const item of sale.items) {
     await db.execute(
-      'INSERT INTO sale_items (id, sale_id, product_id, product_name, quantity, unit_price, total_price) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+      'INSERT INTO sale_items (id, sale_id, product_id, product_name, quantity, purchase_price, unit_price, total_price, profit) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
       [
         crypto.randomUUID(),
         sale.id,
         item.productId,
         item.name,
         item.quantity,
+        item.purchasePrice ?? 0,
         item.unitPrice,
         item.lineTotal,
+        item.profit ?? 0,
       ]
     )
   }
@@ -248,10 +290,10 @@ export async function persistSale(sale: Sale): Promise<void> {
 export async function fetchSales(): Promise<Sale[]> {
   const db = await getDb()
   const saleRows = await db.select<SaleRow[]>(
-    'SELECT id, invoice_number, total_amount, cashier_name, created_at FROM sales ORDER BY created_at DESC'
+    'SELECT id, invoice_number, total_amount, total_profit, cashier_name, created_at FROM sales ORDER BY created_at DESC'
   )
   const itemRows = await db.select<SaleItemRow[]>(
-    'SELECT id, sale_id, product_id, product_name, quantity, unit_price, total_price FROM sale_items'
+    'SELECT id, sale_id, product_id, product_name, quantity, purchase_price, unit_price, total_price, profit FROM sale_items'
   )
 
   const itemsBySale = new Map<string, SaleItem[]>()
@@ -261,9 +303,11 @@ export async function fetchSales(): Promise<Sale[]> {
       productId: row.product_id,
       sku: '',
       name: row.product_name,
+      purchasePrice: row.purchase_price,
       unitPrice: row.unit_price,
       quantity: row.quantity,
       lineTotal: row.total_price,
+      profit: row.profit,
     })
     itemsBySale.set(row.sale_id, items)
   }
@@ -275,9 +319,26 @@ export async function fetchSales(): Promise<Sale[]> {
     subtotal: 0,
     tax: 0,
     total: row.total_amount,
+    totalProfit: row.total_profit,
     cashierId: row.cashier_name,
     createdAt: row.created_at,
   }))
+}
+
+/** Removes sales, line items, and daily summaries outside the six-month window. */
+export async function cleanupOldSalesData(): Promise<void> {
+  const db = await getDb()
+  const cutoff = new Date()
+  cutoff.setDate(cutoff.getDate() - 180)
+  const cutoffIso = cutoff.toISOString()
+  await db.execute(
+    'DELETE FROM sale_items WHERE sale_id IN (SELECT id FROM sales WHERE created_at < $1)',
+    [cutoffIso]
+  )
+  await db.execute('DELETE FROM sales WHERE created_at < $1', [cutoffIso])
+  await db.execute('DELETE FROM daily_summaries WHERE summary_date < $1', [
+    cutoffIso.slice(0, 10),
+  ])
 }
 
 /* ------------------------------------------------------------------ */

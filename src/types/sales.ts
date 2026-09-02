@@ -7,6 +7,7 @@ export interface CartItem {
   productId: string
   sku: string
   name: string
+  purchasePrice?: number
   unitPrice: number
   quantity: number
 }
@@ -14,6 +15,7 @@ export interface CartItem {
 /** An immutable line item recorded on a completed sale. */
 export interface SaleItem extends CartItem {
   lineTotal: number
+  profit?: number
 }
 
 /** A completed sale transaction and its receipt data. */
@@ -25,6 +27,7 @@ export interface Sale {
   subtotal: number
   tax: number
   total: number
+  totalProfit?: number
   cashierId: string
   createdAt: string
 }

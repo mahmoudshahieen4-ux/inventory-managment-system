@@ -51,7 +51,7 @@ export function ProductCatalog() {
           {t('pos.empty')}
         </div>
       ) : (
-        <div className="grid min-h-0 flex-1 auto-rows-min content-start gap-3 overflow-y-auto pb-1 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid min-h-0 w-full min-w-0 flex-1 auto-rows-min content-start gap-3 overflow-y-auto overflow-x-hidden pb-1 sm:grid-cols-2 xl:grid-cols-3">
           {filteredProducts.map(product => {
             const status = getStockStatus(
               product.quantity,

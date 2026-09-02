@@ -194,7 +194,7 @@ export function InventoryTable() {
       <CardContent className="space-y-4">
         {/* Toolbar: search + status filter */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="relative w-full sm:max-w-xs">
+          <div className="relative w-full sm:flex-1">
             <Search className="text-muted-foreground pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2" />
             <Input
               type="search"
@@ -211,7 +211,7 @@ export function InventoryTable() {
             onValueChange={value => setFilter(value as StockFilter)}
           >
             <SelectTrigger
-              className="w-full sm:w-[220px]"
+              className="w-full sm:flex-1"
               aria-label={t('inventory.filterLabel')}
             >
               <SelectValue placeholder={t('inventory.filter.all')} />
@@ -228,8 +228,8 @@ export function InventoryTable() {
           </Select>
         </div>
         {/* Products table */}
-        <div className="overflow-x-auto rounded-xl border">
-          <Table>
+        <div className="w-full min-w-0 overflow-x-auto rounded-xl border">
+          <Table className="w-full min-w-full table-auto">
             <TableHeader>
               <TableRow className="bg-muted/40 hover:bg-muted/40">
                 {renderSortableHead('sku', t('inventory.column.sku'))}

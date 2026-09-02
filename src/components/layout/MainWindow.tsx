@@ -13,22 +13,16 @@ import { Toaster } from 'sonner'
 import { useTheme } from '@/hooks/use-theme'
 import { useUIStore } from '@/store/ui-store'
 import { useMainWindowEventListeners } from '@/hooks/useMainWindowEventListeners'
-import { cn } from '@/lib/utils'
 
 /**
  * Layout sizing configuration for resizable panels.
- * All values are percentages of total width.
- * Sidebar defaults + main default must equal 100.
+ * All values are percentages of total width when both sidebars are visible.
  */
 const LAYOUT = {
-  leftSidebar: { default: 20, min: 15, max: 40 },
-  rightSidebar: { default: 20, min: 15, max: 40 },
+  leftSidebar: { default: 18, min: 12, max: 30 },
+  rightSidebar: { default: 18, min: 12, max: 30 },
   main: { min: 30 },
 } as const
-
-// Main content default is calculated to ensure totals sum to 100%
-const MAIN_CONTENT_DEFAULT =
-  100 - LAYOUT.leftSidebar.default - LAYOUT.rightSidebar.default
 
 export function MainWindow() {
   const { theme } = useTheme()
@@ -38,40 +32,52 @@ export function MainWindow() {
   // Set up global event listeners (keyboard shortcuts, etc.)
   useMainWindowEventListeners()
 
+  const visibleSidebarCount =
+    Number(leftSidebarVisible) + Number(rightSidebarVisible)
+  const mainContentDefault =
+    100 - visibleSidebarCount * LAYOUT.leftSidebar.default
+
   return (
-    <div className="flex h-screen w-full flex-col overflow-hidden rounded-[var(--app-corner-radius)] bg-background">
+    <div className="flex h-screen min-w-0 w-full flex-col overflow-hidden bg-background">
       <TitleBar />
 
-      <div className="flex flex-1 overflow-hidden">
-        <ResizablePanelGroup direction="horizontal">
-          <ResizablePanel
-            defaultSize={LAYOUT.leftSidebar.default}
-            minSize={LAYOUT.leftSidebar.min}
-            maxSize={LAYOUT.leftSidebar.max}
-            className={cn(!leftSidebarVisible && 'hidden')}
-          >
-            <LeftSideBar />
-          </ResizablePanel>
+      <div className="flex min-w-0 flex-1 overflow-hidden">
+        <ResizablePanelGroup
+          className="h-full min-w-0 w-full"
+          direction="horizontal"
+        >
+          {leftSidebarVisible && (
+            <>
+              <ResizablePanel
+                defaultSize={LAYOUT.leftSidebar.default}
+                minSize={LAYOUT.leftSidebar.min}
+                maxSize={LAYOUT.leftSidebar.max}
+              >
+                <LeftSideBar />
+              </ResizablePanel>
+              <ResizableHandle />
+            </>
+          )}
 
-          <ResizableHandle className={cn(!leftSidebarVisible && 'hidden')} />
-
           <ResizablePanel
-            defaultSize={MAIN_CONTENT_DEFAULT}
+            defaultSize={mainContentDefault}
             minSize={LAYOUT.main.min}
           >
             <MainWindowContent />
           </ResizablePanel>
 
-          <ResizableHandle className={cn(!rightSidebarVisible && 'hidden')} />
-
-          <ResizablePanel
-            defaultSize={LAYOUT.rightSidebar.default}
-            minSize={LAYOUT.rightSidebar.min}
-            maxSize={LAYOUT.rightSidebar.max}
-            className={cn(!rightSidebarVisible && 'hidden')}
-          >
-            <RightSideBar />
-          </ResizablePanel>
+          {rightSidebarVisible && (
+            <>
+              <ResizableHandle />
+              <ResizablePanel
+                defaultSize={LAYOUT.rightSidebar.default}
+                minSize={LAYOUT.rightSidebar.min}
+                maxSize={LAYOUT.rightSidebar.max}
+              >
+                <RightSideBar />
+              </ResizablePanel>
+            </>
+          )}
         </ResizablePanelGroup>
       </div>
 

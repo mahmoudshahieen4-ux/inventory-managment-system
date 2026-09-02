@@ -54,6 +54,7 @@ export const useCartStore = create<CartState>()(
                   productId: product.id,
                   sku: product.sku,
                   name: product.name,
+                  purchasePrice: product.purchasePrice,
                   unitPrice: product.sellingPrice,
                   quantity: nextQty,
                 },

@@ -41,6 +41,7 @@ describe('useCartStore', () => {
         productId: 'prod-1',
         sku: 'SNK-004',
         name: 'Dark Chocolate Bar',
+        purchasePrice: 0.8,
         unitPrice: 2.49,
         quantity: 1,
       },

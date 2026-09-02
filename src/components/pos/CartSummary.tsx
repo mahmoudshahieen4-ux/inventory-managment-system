@@ -65,6 +65,9 @@ export function CartSummary({ onCheckoutComplete }: CartSummaryProps) {
     const saleItems: SaleItem[] = items.map(item => ({
       ...item,
       lineTotal: roundMoney(item.unitPrice * item.quantity),
+      profit: roundMoney(
+        (item.unitPrice - (item.purchasePrice ?? 0)) * item.quantity
+      ),
     }))
     const cartState = useCartStore.getState()
     const sale = useSalesStore.getState().addSale({
@@ -72,6 +75,9 @@ export function CartSummary({ onCheckoutComplete }: CartSummaryProps) {
       subtotal: selectCartSubtotal(cartState),
       tax: selectCartTax(cartState),
       total: selectCartTotal(cartState),
+      totalProfit: roundMoney(
+        saleItems.reduce((sum, item) => sum + (item.profit ?? 0), 0)
+      ),
       cashierId: useAuthStore.getState().role,
     })
 

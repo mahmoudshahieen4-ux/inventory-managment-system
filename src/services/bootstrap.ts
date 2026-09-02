@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 
-import { isTauriRuntime } from './db'
+import { cleanupOldSalesData, isTauriRuntime } from './db'
 import { useInventoryStore } from '@/store/useInventoryStore'
 import { useSalesStore } from '@/store/useSalesStore'
 import { useUIStore } from '@/store/ui-store'
@@ -20,6 +20,7 @@ export function useAppBootstrap(): void {
     setDbInitializing(true)
 
     Promise.all([
+      cleanupOldSalesData(),
       useInventoryStore.getState().hydrate(),
       useSalesStore.getState().hydrate(),
     ])

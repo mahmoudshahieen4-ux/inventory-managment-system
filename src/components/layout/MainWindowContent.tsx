@@ -38,7 +38,12 @@ export function MainWindowContent({
   const isTrial = licenseStatus === 'TRIAL'
 
   return (
-    <div className={cn('flex h-full flex-col bg-background', className)}>
+    <div
+      className={cn(
+        'flex h-full min-h-screen min-w-0 w-full flex-1 flex-col overflow-x-hidden bg-background p-4',
+        className
+      )}
+    >
       {children || (
         <>
           <div className="border-b px-3 py-2 sm:px-4">

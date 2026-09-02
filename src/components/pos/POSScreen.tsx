@@ -23,9 +23,9 @@ export function POSScreen() {
   const [tab, setTab] = useState<PosTab>('catalog')
 
   return (
-    <div className="flex h-full min-h-0 w-full gap-6 px-3 py-3 sm:px-4 sm:py-4">
+    <div className="grid h-full min-h-0 w-full min-w-0 grid-cols-12 gap-4 overflow-y-auto overflow-x-hidden px-3 py-3 sm:px-4 sm:py-4">
       {/* Left: product catalog with fast search, or sales history */}
-      <section className="flex min-w-0 flex-1 flex-col gap-3">
+      <section className="col-span-12 flex min-w-0 flex-col gap-3 lg:col-span-8">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h1 className="text-lg font-semibold">{t('pos.title')}</h1>
@@ -65,7 +65,7 @@ export function POSScreen() {
       </section>
 
       {/* Right: current sale / cart summary */}
-      <section className="flex w-[380px] shrink-0 ps-1">
+      <section className="col-span-12 flex min-w-0 ps-0 lg:col-span-4 lg:ps-1">
         <CartSummary
           onCheckoutComplete={sale => {
             setReceiptSale(sale)
