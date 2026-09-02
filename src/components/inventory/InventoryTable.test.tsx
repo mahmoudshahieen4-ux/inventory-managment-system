@@ -67,12 +67,32 @@ describe('InventoryTable', () => {
     render(<InventoryTable />)
 
     await user.click(screen.getByLabelText(/filter by stock/i))
-    await user.click(await screen.findByRole('option', { name: /low stock/i }))
+    await user.click(
+      await screen.findByRole('option', { name: 'Low Stock Only' })
+    )
 
     expect(screen.getByText('Whole Milk 1L')).toBeInTheDocument()
     expect(screen.getByText('Butter Croissant')).toBeInTheDocument()
     expect(screen.queryByText('Espresso Beans 1kg')).not.toBeInTheDocument()
     expect(screen.queryByText('Dark Chocolate Bar')).not.toBeInTheDocument()
+  })
+
+  it('filters to low and out of stock products together', async () => {
+    const user = userEvent.setup()
+    render(<InventoryTable />)
+
+    await user.click(screen.getByLabelText(/filter by stock/i))
+    await user.click(
+      await screen.findByRole('option', {
+        name: 'Low Stock & Out of Stock',
+      })
+    )
+
+    expect(screen.getByText('Espresso Beans 1kg')).toBeInTheDocument()
+    expect(screen.getByText('Whole Milk 1L')).toBeInTheDocument()
+    expect(screen.getByText('Butter Croissant')).toBeInTheDocument()
+    expect(screen.queryByText('Dark Chocolate Bar')).not.toBeInTheDocument()
+    expect(screen.queryByText('Bottled Water 500ml')).not.toBeInTheDocument()
   })
 
   it('filters to out of stock products via the status dropdown', async () => {
@@ -81,7 +101,7 @@ describe('InventoryTable', () => {
 
     await user.click(screen.getByLabelText(/filter by stock/i))
     await user.click(
-      await screen.findByRole('option', { name: /out of stock/i })
+      await screen.findByRole('option', { name: 'Out of Stock Only' })
     )
 
     expect(screen.getByText('Espresso Beans 1kg')).toBeInTheDocument()

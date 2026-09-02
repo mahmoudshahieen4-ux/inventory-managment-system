@@ -31,3 +31,25 @@ export interface Sale {
   cashierId: string
   createdAt: string
 }
+
+/** A line included in a partial or full return. */
+export interface ReturnItem {
+  productId: string
+  name: string
+  sku: string
+  quantity: number
+  unitPrice: number
+  lineTotal: number
+}
+
+/** Immutable credit note issued instead of mutating the original invoice. */
+export interface CreditNote {
+  id: string
+  creditNoteNumber: string
+  originalInvoiceNumber: string
+  originalSaleId: string
+  items: ReturnItem[]
+  total: number
+  cashierId: string
+  createdAt: string
+}

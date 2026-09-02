@@ -22,6 +22,32 @@ body {
   overflow-x: hidden !important;
 }
 
+/* Consistent, compact scrollbar for long inventory and POS surfaces. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--primary) var(--muted);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--muted);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--primary) 70%, var(--muted));
+  border: 2px solid var(--muted);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--primary);
+}
+
 @layer base {
   :root {
     --app-corner-radius: 12px;
@@ -101,7 +127,9 @@ body {
   }
 
   .receipt-print-area,
-  .receipt-print-area * {
+  .receipt-print-area *,
+  .credit-note-print-area,
+  .credit-note-print-area * {
     visibility: visible !important;
   }
 
@@ -110,6 +138,43 @@ body {
     inset-block-start: 0 !important;
     inset-inline-start: 0 !important;
     width: 100% !important;
+  }
+
+  .credit-note-print-area {
+    position: absolute !important;
+    inset-block-start: 0 !important;
+    inset-inline-start: 0 !important;
+    width: 80mm !important;
+    max-width: 80mm !important;
+    padding: 4mm !important;
+    color: #000 !important;
+    background: #fff !important;
+  }
+
+  .credit-note-barcode {
+    background: repeating-linear-gradient(
+      90deg,
+      #000 0,
+      #000 1px,
+      #fff 1px,
+      #fff 3px,
+      #000 3px,
+      #000 5px,
+      #fff 5px,
+      #fff 7px
+    );
+    border-block: 3px solid #000;
+    padding-block: 6px;
+    text-align: center;
+    font-family: monospace;
+    font-size: 14px;
+    letter-spacing: 2px;
+  }
+
+  .credit-note-barcode span {
+    display: inline-block;
+    background: #fff;
+    padding-inline: 6px;
   }
 }
 

@@ -90,7 +90,6 @@ function validate(values: ProductFormValues, t: Translate): FormErrors {
   const negative = t('inventory.form.validation.nonNegative')
 
   if (!values.name.trim()) errors.name = required
-  if (!values.sku.trim()) errors.sku = required
   if (!values.category.trim()) errors.category = required
 
   if (values.unit === 'كرتونة') {
@@ -225,6 +224,7 @@ export function ProductFormModal({
               id="product-sku"
               value={values.sku}
               onChange={setField('sku')}
+              placeholder={t('inventory.form.skuPlaceholder')}
               aria-invalid={errors.sku ? true : undefined}
             />
             {errors.sku && (

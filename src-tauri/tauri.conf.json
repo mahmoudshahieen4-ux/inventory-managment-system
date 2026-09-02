@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "tauri-app",
-  "version": "0.1.0",
-  "identifier": "com.tauri-app.app",
+  "productName": "نظام نقاط البيع والمخازن",
+  "version": "1.0.0",
+  "identifier": "com.egyptpos.store",
   "build": {
     "removeUnusedCommands": true,
     "beforeDevCommand": "npm run dev",
@@ -14,11 +14,11 @@
     "windows": [
       {
         "label": "main",
-        "title": "tauri-app",
-        "width": 1200,
-        "height": 800,
-        "minWidth": 1000,
-        "minHeight": 700,
+        "title": "نظام إدارة المبيعات والمخازن",
+        "width": 1600,
+        "height": 950,
+        "minWidth": 1200,
+        "minHeight": 760,
         "resizable": true,
         "fullscreen": false,
         "maximized": false,
@@ -33,10 +33,9 @@
     "security": {
       "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' tauri: ipc: http://ipc.localhost"
     },
-    "macOSPrivateApi": true
+    "macOSPrivateApi": false
   },
   "bundle": {
-    "createUpdaterArtifacts": true,
     "active": true,
     "targets": "all",
     "icon": [
@@ -46,28 +45,27 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "publisher": "Your Name",
-    "category": "DeveloperTool",
-    "shortDescription": "A Tauri React template application",
-    "longDescription": "A modern Tauri React template with comprehensive boilerplate code, TypeScript, Tailwind CSS, and shadcn/ui components.",
-    "copyright": "Copyright © 2025 Your Name. All rights reserved.",
-    "macOS": {
-      "frameworks": [],
-      "minimumSystemVersion": "10.15",
-      "signingIdentity": "-",
-      "providerShortName": null,
-      "entitlements": null,
-      "exceptionDomain": ""
+    "publisher": "اسم شركتك أو اسمك",
+    "category": "Business",
+    "shortDescription": "برنامج إدارة المبيعات والمخازن والحسابات",
+    "longDescription": "نظام محلي لإدارة أجهزة نقاط البيع، المبيعات، حساب الأرباح، وحركة المخزون مع دعم كامل للعملة المصرية والتشفير.",
+    "copyright": "جميع الحقوق محفوظة © 2026",
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "",
+      "nsis": {
+        "displayLanguageSelector": false,
+        "installerIcon": "icons/icon.ico",
+        "headerImage": null,
+        "sidebarImage": null,
+        "installMode": "both"
+      }
     }
   },
   "plugins": {
     "updater": {
-      "active": true,
-      "endpoints": [
-        "https://github.com/YOUR_USERNAME/YOUR_REPO/releases/latest/download/latest.json"
-      ],
-      "dialog": true,
-      "pubkey": "YOUR_UPDATER_PUBLIC_KEY_HERE"
+      "active": false
     }
   }
 }

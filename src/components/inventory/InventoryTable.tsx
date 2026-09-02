@@ -47,7 +47,7 @@ import type { Product, StockStatus } from '@/types/inventory'
 import { ProductFormModal } from './ProductFormModal'
 import { stockStatusStyles } from './stock-status-config'
 
-type StockFilter = StockStatus | 'ALL'
+type StockFilter = StockStatus | 'ALL' | 'LOW_AND_OUT'
 
 type SortKey =
   | 'sku'
@@ -99,7 +99,13 @@ export function InventoryTable() {
     if (!matchesSearch) return false
 
     if (filter === 'ALL') return true
-    return getStockStatus(product.quantity, product.minThreshold) === filter
+
+    const status = getStockStatus(product.quantity, product.minThreshold)
+    if (filter === 'LOW_AND_OUT') {
+      return status === 'LOW_STOCK' || status === 'OUT_OF_STOCK'
+    }
+
+    return status === filter
   })
 
   const sortedProducts = sortProducts(filteredProducts, sort)
@@ -218,6 +224,9 @@ export function InventoryTable() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="ALL">{t('inventory.filter.all')}</SelectItem>
+              <SelectItem value="LOW_AND_OUT">
+                {t('inventory.filter.lowAndOut')}
+              </SelectItem>
               <SelectItem value="LOW_STOCK">
                 {t('inventory.filter.lowStock')}
               </SelectItem>
@@ -230,8 +239,8 @@ export function InventoryTable() {
         {/* Products table */}
         <div className="w-full min-w-0 overflow-x-auto rounded-xl border">
           <Table className="w-full min-w-full table-auto">
-            <TableHeader>
-              <TableRow className="bg-muted/40 hover:bg-muted/40">
+            <TableHeader className="bg-muted">
+              <TableRow className="hover:bg-muted">
                 {renderSortableHead('sku', t('inventory.column.sku'))}
                 {renderSortableHead('name', t('inventory.column.name'))}
                 <TableHead className={headClass}>
@@ -281,7 +290,7 @@ export function InventoryTable() {
                   <TableRow
                     key={product.id}
                     className={cn(
-                      'border-border/60 hover:bg-slate-800/60',
+                      'border-border/60 bg-card text-card-foreground hover:bg-accent/60',
                       statusStyle.rowClassName
                     )}
                   >

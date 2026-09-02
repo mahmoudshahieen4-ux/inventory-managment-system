@@ -1,4 +1,5 @@
 import { Minus, Plus, ShoppingCart, Trash2 } from 'lucide-react'
+import type { ChangeEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -87,6 +88,18 @@ export function CartSummary({ onCheckoutComplete }: CartSummaryProps) {
     toast.success(t('pos.toast.saleSuccess'))
   }
 
+  const handleQuantityChange = (
+    productId: string,
+    stock: number,
+    event: ChangeEvent<HTMLInputElement>
+  ) => {
+    const parsedQuantity = Number.parseInt(event.target.value, 10)
+    if (Number.isNaN(parsedQuantity)) return
+    useCartStore
+      .getState()
+      .updateQuantity(productId, Math.min(parsedQuantity, stock))
+  }
+
   return (
     <Card className="flex h-full min-h-0 w-full flex-col">
       <CardHeader className="pb-3">
@@ -149,9 +162,17 @@ export function CartSummary({ onCheckoutComplete }: CartSummaryProps) {
                       >
                         <Minus className="size-3.5" />
                       </Button>
-                      <span className="w-8 text-center text-sm font-medium">
-                        {item.quantity}
-                      </span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={stock}
+                        value={item.quantity}
+                        aria-label={t('pos.cart.quantity', { name: item.name })}
+                        className="border-input bg-background text-foreground h-7 w-14 rounded-md border text-center text-sm font-medium outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+                        onChange={event =>
+                          handleQuantityChange(item.productId, stock, event)
+                        }
+                      />
                       <Button
                         variant="outline"
                         size="icon"

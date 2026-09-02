@@ -7,7 +7,7 @@
 import Database from '@tauri-apps/plugin-sql'
 
 import type { Product } from '@/types/inventory'
-import type { Sale, SaleItem } from '@/types/sales'
+import type { CreditNote, Sale, SaleItem } from '@/types/sales'
 
 /** True only inside the Tauri desktop webview. */
 export function isTauriRuntime(): boolean {
@@ -56,7 +56,7 @@ function getDb(): Promise<Database> {
           quantity INTEGER NOT NULL,
           purchase_price REAL NOT NULL DEFAULT 0,
           unit_price REAL NOT NULL,
-          total_price REAL NOT NULL
+          total_price REAL NOT NULL,
           profit REAL NOT NULL DEFAULT 0
         )
       `)
@@ -65,6 +65,25 @@ function getDb(): Promise<Database> {
         revenue REAL NOT NULL DEFAULT 0,
         profit REAL NOT NULL DEFAULT 0,
         updated_at TEXT NOT NULL
+      )`)
+      await db.execute(`CREATE TABLE IF NOT EXISTS credit_notes (
+        id TEXT PRIMARY KEY,
+        credit_note_number TEXT NOT NULL UNIQUE,
+        original_invoice_number TEXT NOT NULL,
+        original_sale_id TEXT NOT NULL REFERENCES sales(id),
+        total_amount REAL NOT NULL,
+        cashier_name TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      )`)
+      await db.execute(`CREATE TABLE IF NOT EXISTS credit_note_items (
+        id TEXT PRIMARY KEY,
+        credit_note_id TEXT NOT NULL REFERENCES credit_notes(id),
+        product_id TEXT NOT NULL,
+        product_name TEXT NOT NULL,
+        quantity INTEGER NOT NULL,
+        sku TEXT NOT NULL,
+        unit_price REAL NOT NULL,
+        total_price REAL NOT NULL
       )`)
       await db.execute(
         'CREATE INDEX IF NOT EXISTS idx_sale_items_sale_id ON sale_items(sale_id)'
@@ -322,6 +341,86 @@ export async function fetchSales(): Promise<Sale[]> {
     totalProfit: row.total_profit,
     cashierId: row.cashier_name,
     createdAt: row.created_at,
+  }))
+}
+
+export async function persistCreditNote(note: CreditNote): Promise<void> {
+  const db = await getDb()
+  await db.execute(
+    'INSERT INTO credit_notes (id, credit_note_number, original_invoice_number, original_sale_id, total_amount, cashier_name, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+    [
+      note.id,
+      note.creditNoteNumber,
+      note.originalInvoiceNumber,
+      note.originalSaleId,
+      note.total,
+      note.cashierId,
+      note.createdAt,
+    ]
+  )
+  for (const item of note.items) {
+    await db.execute(
+      'INSERT INTO credit_note_items (id, credit_note_id, product_id, product_name, quantity, sku, unit_price, total_price) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+      [
+        crypto.randomUUID(),
+        note.id,
+        item.productId,
+        item.name,
+        item.quantity,
+        item.sku,
+        item.unitPrice,
+        item.lineTotal,
+      ]
+    )
+  }
+}
+
+export async function fetchCreditNotes(): Promise<CreditNote[]> {
+  const db = await getDb()
+  const rows = await db.select<
+    Array<{
+      id: string
+      credit_note_number: string
+      original_invoice_number: string
+      original_sale_id: string
+      total_amount: number
+      cashier_name: string
+      created_at: string
+    }>
+  >(
+    'SELECT id, credit_note_number, original_invoice_number, original_sale_id, total_amount, cashier_name, created_at FROM credit_notes ORDER BY created_at DESC'
+  )
+  const items = await db.select<
+    Array<{
+      credit_note_id: string
+      product_id: string
+      product_name: string
+      quantity: number
+      sku: string
+      unit_price: number
+      total_price: number
+    }>
+  >(
+    'SELECT credit_note_id, product_id, product_name, quantity, sku, unit_price, total_price FROM credit_note_items'
+  )
+  return rows.map(row => ({
+    id: row.id,
+    creditNoteNumber: row.credit_note_number,
+    originalInvoiceNumber: row.original_invoice_number,
+    originalSaleId: row.original_sale_id,
+    total: row.total_amount,
+    cashierId: row.cashier_name,
+    createdAt: row.created_at,
+    items: items
+      .filter(item => item.credit_note_id === row.id)
+      .map(item => ({
+        productId: item.product_id,
+        name: item.product_name,
+        sku: item.sku,
+        quantity: item.quantity,
+        unitPrice: item.unit_price,
+        lineTotal: item.total_price,
+      })),
   }))
 }
 

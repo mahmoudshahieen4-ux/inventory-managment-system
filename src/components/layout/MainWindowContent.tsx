@@ -40,7 +40,7 @@ export function MainWindowContent({
   return (
     <div
       className={cn(
-        'flex h-full min-h-screen min-w-0 w-full flex-1 flex-col overflow-x-hidden bg-background p-4',
+        'flex h-full min-h-screen w-full flex-1 flex-col overflow-x-hidden bg-background p-4',
         className
       )}
     >

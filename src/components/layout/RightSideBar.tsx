@@ -8,7 +8,10 @@ interface RightSideBarProps {
 export function RightSideBar({ children, className }: RightSideBarProps) {
   return (
     <div
-      className={cn('flex h-full flex-col border-l bg-background', className)}
+      className={cn(
+        'flex h-full flex-col border-l border-sidebar-border bg-sidebar text-sidebar-foreground',
+        className
+      )}
     >
       {children}
     </div>

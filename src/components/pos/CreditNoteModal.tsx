@@ -13,38 +13,37 @@ import {
 import { formatMoney } from '@/lib/money'
 import { STORE_INFO } from '@/lib/store-config'
 import { formatTransactionTimestamp } from '@/lib/date-time'
-import type { Sale } from '@/types/sales'
+import type { CreditNote } from '@/types/sales'
 
-interface ReceiptModalProps {
-  /** The completed sale to display; null when there is nothing to show. */
-  sale: Sale | null
+interface CreditNoteModalProps {
+  note: CreditNote | null
   open: boolean
   onOpenChange: (open: boolean) => void
 }
 
-/** Receipt preview shown after a successful checkout. Printing uses the browser print dialog. */
-export function ReceiptModal({ sale, open, onOpenChange }: ReceiptModalProps) {
+export function CreditNoteModal({
+  note,
+  open,
+  onOpenChange,
+}: CreditNoteModalProps) {
   const { t } = useTranslation()
 
-  if (!sale) return null
-
-  const handlePrint = () => {
-    window.print()
-  }
+  if (!note) return null
 
   const cashierName =
-    sale.cashierId === 'ADMIN' ? t('auth.role.admin') : t('auth.role.cashier')
+    note.cashierId === 'ADMIN' ? t('auth.role.admin') : t('auth.role.cashier')
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{t('pos.receipt.title')}</DialogTitle>
-          <DialogDescription>{t('pos.receipt.description')}</DialogDescription>
+          <DialogTitle>{t('pos.creditNote.title')}</DialogTitle>
+          <DialogDescription>
+            {t('pos.creditNote.description')}
+          </DialogDescription>
         </DialogHeader>
 
-        {/* Printable area: App.css hides everything else while printing */}
-        <div className="receipt-print-area text-sm">
+        <div className="credit-note-print-area text-sm">
           <div className="text-center">
             <p className="text-base font-semibold">
               {t('pos.receipt.storeName')}
@@ -53,12 +52,17 @@ export function ReceiptModal({ sale, open, onOpenChange }: ReceiptModalProps) {
               {STORE_INFO.address}
             </p>
             <p className="text-muted-foreground text-xs">{STORE_INFO.phone}</p>
-            <p className="text-muted-foreground text-xs">
-              {t('pos.receipt.date')}:{' '}
-              {formatTransactionTimestamp(sale.createdAt)}
+            <p className="mt-2 text-base font-bold">
+              {t('pos.creditNote.heading')}
             </p>
-            <p className="mt-1 font-medium">
-              {t('pos.receipt.invoiceNo')}: {sale.invoiceNumber}
+            <p className="font-medium">{note.creditNoteNumber}</p>
+            <p className="text-muted-foreground text-xs">
+              {t('pos.creditNote.originalInvoice')}:{' '}
+              {note.originalInvoiceNumber}
+            </p>
+            <p className="text-muted-foreground text-xs">
+              {t('pos.creditNote.returnDate')}:{' '}
+              {formatTransactionTimestamp(note.createdAt)}
             </p>
             <p className="text-muted-foreground text-xs">
               {t('pos.receipt.cashier')}: {cashierName}
@@ -75,21 +79,15 @@ export function ReceiptModal({ sale, open, onOpenChange }: ReceiptModalProps) {
                   {t('pos.receipt.qty')}
                 </th>
                 <th className="py-1 text-end font-medium">
-                  {t('pos.receipt.unitPrice')}
-                </th>
-                <th className="py-1 text-end font-medium">
                   {t('pos.receipt.lineTotal')}
                 </th>
               </tr>
             </thead>
             <tbody>
-              {sale.items.map(item => (
+              {note.items.map(item => (
                 <tr key={item.productId} className="border-b last:border-b-0">
                   <td className="py-1.5">{item.name}</td>
                   <td className="py-1.5 text-center">{item.quantity}</td>
-                  <td className="py-1.5 text-end">
-                    {formatMoney(item.unitPrice)}
-                  </td>
                   <td className="py-1.5 text-end font-medium">
                     {formatMoney(item.lineTotal)}
                   </td>
@@ -98,46 +96,29 @@ export function ReceiptModal({ sale, open, onOpenChange }: ReceiptModalProps) {
             </tbody>
           </table>
 
-          <div className="mt-4 space-y-1 border-t pt-3">
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">
-                {t('pos.receipt.subtotal')}
-              </span>
-              <span>{formatMoney(sale.subtotal)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">
-                {t('pos.receipt.tax')}
-              </span>
-              <span>{formatMoney(sale.tax)}</span>
-            </div>
-            <div className="flex justify-between font-semibold">
-              <span>{t('pos.receipt.total')}</span>
-              <span>{formatMoney(sale.total)}</span>
-            </div>
+          <div className="mt-4 flex justify-between border-t pt-3 font-semibold">
+            <span>{t('pos.creditNote.refundTotal')}</span>
+            <span>{formatMoney(note.total)}</span>
           </div>
-
-          <p className="mt-4 text-center text-xs text-muted-foreground">
-            {t('pos.receipt.thankYou')}
-          </p>
+          <div
+            className="credit-note-barcode mt-5"
+            aria-label={note.creditNoteNumber}
+          >
+            <span>{note.creditNoteNumber}</span>
+          </div>
         </div>
 
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {t('pos.receipt.close')}
           </Button>
-          <Button
-            variant="outline"
-            title={t('pos.receipt.exportPdfHint')}
-            onClick={handlePrint}
-          >
-            <FileText className="size-4" />
-            {t('pos.receipt.exportPdf')}
-          </Button>
-          <Button onClick={handlePrint}>
+          <Button onClick={() => window.print()}>
             <Printer className="size-4" />
-            {t('pos.receipt.print')}
+            {t('pos.creditNote.print')}
           </Button>
+          <span className="sr-only">
+            <FileText />
+          </span>
         </DialogFooter>
       </DialogContent>
     </Dialog>

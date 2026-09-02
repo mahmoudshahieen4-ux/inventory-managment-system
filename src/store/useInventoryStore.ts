@@ -125,7 +125,7 @@ function coerceProduct(product: ProductCoerceInput): Product {
   return {
     id: product.id ?? createProductId(),
     name: product.name ?? '',
-    sku: product.sku ?? '',
+    sku: product.sku?.trim() || createProductSku(),
     quantity: Number(product.quantity) || 0,
     minThreshold: Number(product.minThreshold) || 0,
     purchasePrice: Number(product.purchasePrice) || 0,
@@ -211,4 +211,9 @@ export const useInventoryStore = create<InventoryState>()(
 /** Generates a unique id for newly added products. */
 function createProductId(): string {
   return crypto.randomUUID()
+}
+
+/** Generates a readable SKU when the user leaves the product code empty. */
+function createProductSku(): string {
+  return `PRD-${crypto.randomUUID().slice(0, 8).toUpperCase()}`
 }

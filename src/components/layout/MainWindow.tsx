@@ -38,12 +38,12 @@ export function MainWindow() {
     100 - visibleSidebarCount * LAYOUT.leftSidebar.default
 
   return (
-    <div className="flex h-screen min-w-0 w-full flex-col overflow-hidden bg-background">
+    <div className="flex h-screen w-screen min-w-screen flex-col overflow-hidden bg-background">
       <TitleBar />
 
-      <div className="flex min-w-0 flex-1 overflow-hidden">
+      <div className="flex min-w-screen flex-1 overflow-hidden">
         <ResizablePanelGroup
-          className="h-full min-w-0 w-full"
+          className="h-full min-w-screen w-screen"
           direction="horizontal"
         >
           {leftSidebarVisible && (

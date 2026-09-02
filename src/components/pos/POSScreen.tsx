@@ -1,12 +1,16 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useAuthStore } from '@/store/useAuthStore'
+import { useSalesStore } from '@/store/useSalesStore'
 
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import type { Sale } from '@/types/sales'
+import type { CreditNote, ReturnItem, Sale } from '@/types/sales'
 import { CartSummary } from './CartSummary'
 import { ProductCatalog } from './ProductCatalog'
 import { ReceiptModal } from './ReceiptModal'
 import { SalesHistory } from './SalesHistory'
+import { ReturnModal } from './ReturnModal'
+import { CreditNoteModal } from './CreditNoteModal'
 
 /** Which panel the left POS pane shows. */
 type PosTab = 'catalog' | 'history'
@@ -21,6 +25,10 @@ export function POSScreen() {
   const [receiptOpen, setReceiptOpen] = useState(false)
   const [receiptSale, setReceiptSale] = useState<Sale | null>(null)
   const [tab, setTab] = useState<PosTab>('catalog')
+  const [returnOpen, setReturnOpen] = useState(false)
+  const [returnSale, setReturnSale] = useState<Sale | null>(null)
+  const [creditNote, setCreditNote] = useState<CreditNote | null>(null)
+  const [creditNoteOpen, setCreditNoteOpen] = useState(false)
 
   return (
     <div className="grid h-full min-h-0 w-full min-w-0 grid-cols-12 gap-4 overflow-y-auto overflow-x-hidden px-3 py-3 sm:px-4 sm:py-4">
@@ -60,6 +68,10 @@ export function POSScreen() {
               setReceiptSale(sale)
               setReceiptOpen(true)
             }}
+            onReturn={sale => {
+              setReturnSale(sale)
+              setReturnOpen(true)
+            }}
           />
         )}
       </section>
@@ -78,6 +90,24 @@ export function POSScreen() {
         sale={receiptSale}
         open={receiptOpen}
         onOpenChange={setReceiptOpen}
+      />
+      <ReturnModal
+        sale={returnSale}
+        open={returnOpen}
+        onOpenChange={setReturnOpen}
+        onComplete={(items: ReturnItem[]) => {
+          if (!returnSale) return
+          const note = useSalesStore
+            .getState()
+            .createCreditNote(returnSale, items, useAuthStore.getState().role)
+          setCreditNote(note)
+          setCreditNoteOpen(true)
+        }}
+      />
+      <CreditNoteModal
+        note={creditNote}
+        open={creditNoteOpen}
+        onOpenChange={setCreditNoteOpen}
       />
     </div>
   )

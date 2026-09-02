@@ -25,13 +25,14 @@ export function ProductCatalog() {
   )
 
   const normalizedSearch = search.trim().toLowerCase()
+  const sellableProducts = products.filter(product => product.quantity > 0)
   const filteredProducts = normalizedSearch
-    ? products.filter(
+    ? sellableProducts.filter(
         product =>
           product.name.toLowerCase().includes(normalizedSearch) ||
           product.sku.toLowerCase().includes(normalizedSearch)
       )
-    : products
+    : sellableProducts
 
   return (
     <>

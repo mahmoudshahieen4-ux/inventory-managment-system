@@ -29,18 +29,18 @@ describe('POSScreen', () => {
     expect(
       screen.getByRole('heading', { name: 'Point of Sale' })
     ).toBeInTheDocument()
-    expect(screen.getByText('Espresso Beans 1kg')).toBeInTheDocument()
     expect(screen.getByText('Dark Chocolate Bar')).toBeInTheDocument()
-    expect(screen.getByText('Stock: 0')).toBeInTheDocument()
+    expect(screen.queryByText('Espresso Beans 1kg')).not.toBeInTheDocument()
+    expect(screen.queryByText('Stock: 0')).not.toBeInTheDocument()
     expect(screen.getByText('Stock: 50')).toBeInTheDocument()
     expect(screen.getByText('2.49 ج.م')).toBeInTheDocument()
   })
 
-  it('disables Add for out-of-stock products', () => {
+  it('hides out-of-stock products from the catalog', () => {
     render(<POSScreen />)
 
-    const card = getCard('Espresso Beans 1kg')
-    expect(within(card).getByRole('button', { name: 'Add' })).toBeDisabled()
+    expect(screen.queryByText('Espresso Beans 1kg')).not.toBeInTheDocument()
+    expect(screen.queryByText('Stock: 0')).not.toBeInTheDocument()
   })
 
   it('filters products instantly by name and SKU', async () => {

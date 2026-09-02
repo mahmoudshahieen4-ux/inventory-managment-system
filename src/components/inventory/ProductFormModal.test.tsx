@@ -60,7 +60,7 @@ describe('ProductFormModal', () => {
 
     await user.click(screen.getByRole('button', { name: 'Create Product' }))
 
-    expect(screen.getAllByText('This field is required.')).toHaveLength(7)
+    expect(screen.getAllByText('This field is required.')).toHaveLength(6)
     expect(onOpenChangeMock).not.toHaveBeenCalled()
     expect(useInventoryStore.getState().products).toHaveLength(
       initialProducts.length
