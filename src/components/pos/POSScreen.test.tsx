@@ -33,7 +33,7 @@ describe('POSScreen', () => {
     expect(screen.getByText('Dark Chocolate Bar')).toBeInTheDocument()
     expect(screen.getByText('Stock: 0')).toBeInTheDocument()
     expect(screen.getByText('Stock: 50')).toBeInTheDocument()
-    expect(screen.getByText('$2.49')).toBeInTheDocument()
+    expect(screen.getByText('2.49 ج.م')).toBeInTheDocument()
   })
 
   it('disables Add for out-of-stock products', () => {
@@ -70,9 +70,9 @@ describe('POSScreen', () => {
 
     expect(screen.getByText('In cart: 2')).toBeInTheDocument()
     expect(screen.getByText('Tax (5%)')).toBeInTheDocument()
-    expect(screen.getByText('$0.25')).toBeInTheDocument()
-    expect(screen.getAllByText('$4.98').length).toBeGreaterThan(0)
-    expect(screen.getByText('$5.23')).toBeInTheDocument()
+    expect(screen.getByText('0.25 ج.م')).toBeInTheDocument()
+    expect(screen.getAllByText('4.98 ج.م').length).toBeGreaterThan(0)
+    expect(screen.getByText('5.23 ج.م')).toBeInTheDocument()
     expect(useCartStore.getState().items.at(0)).toMatchObject({
       productId: 'prod-004',
       quantity: 2,
@@ -114,7 +114,7 @@ describe('POSScreen', () => {
     // Receipt dialog opens automatically
     expect(await screen.findByText('Receipt')).toBeInTheDocument()
     expect(screen.getByText('My Store')).toBeInTheDocument()
-    expect(screen.getByText('$5.23')).toBeInTheDocument()
+    expect(screen.getByText('5.23 ج.م')).toBeInTheDocument()
 
     // Stock deducted immediately: 50 - 2 = 48
     const chocolate = useInventoryStore
@@ -176,7 +176,7 @@ describe('POSScreen', () => {
     // Switch to the history tab and inspect the stored invoice (1 × $2.49 + 5% tax)
     await user.click(screen.getByText('Sales History'))
     expect(screen.getByText('INV-0001')).toBeInTheDocument()
-    expect(screen.getByText('$2.61')).toBeInTheDocument()
+    expect(screen.getByText('2.61 ج.م')).toBeInTheDocument()
 
     // Re-open the receipt from history
     await user.click(

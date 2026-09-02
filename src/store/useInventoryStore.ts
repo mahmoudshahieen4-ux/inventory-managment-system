@@ -32,7 +32,8 @@ export const initialProducts: Product[] = [
     purchasePrice: 12.5,
     sellingPrice: 24.99,
     category: 'Coffee',
-    unit: 'kg',
+    unit: 'كرتونة',
+    unitsPerCarton: 12,
   },
   // LOW_STOCK (below threshold)
   {
@@ -44,7 +45,7 @@ export const initialProducts: Product[] = [
     purchasePrice: 1.2,
     sellingPrice: 3.49,
     category: 'Dairy',
-    unit: 'L',
+    unit: 'علبة',
   },
   // LOW_STOCK (exactly at threshold)
   {
@@ -56,7 +57,7 @@ export const initialProducts: Product[] = [
     purchasePrice: 0.9,
     sellingPrice: 2.99,
     category: 'Bakery',
-    unit: 'pcs',
+    unit: 'علبة',
   },
   // IN_STOCK
   {
@@ -68,7 +69,7 @@ export const initialProducts: Product[] = [
     purchasePrice: 0.8,
     sellingPrice: 2.49,
     category: 'Snacks',
-    unit: 'pcs',
+    unit: 'علبة',
   },
   // IN_STOCK
   {
@@ -80,7 +81,7 @@ export const initialProducts: Product[] = [
     purchasePrice: 0.35,
     sellingPrice: 1.49,
     category: 'Beverages',
-    unit: 'pcs',
+    unit: 'علبة',
   },
 ]
 
@@ -112,6 +113,7 @@ interface ProductCoerceInput {
   sellingPrice?: number | string
   category?: string
   unit?: string
+  unitsPerCarton?: number | string
 }
 
 /**
@@ -130,6 +132,10 @@ function coerceProduct(product: ProductCoerceInput): Product {
     sellingPrice: Number(product.sellingPrice) || 0,
     category: product.category ?? '',
     unit: product.unit?.trim() || undefined,
+    unitsPerCarton:
+      product.unit === 'كرتونة' && Number(product.unitsPerCarton) > 0
+        ? Number(product.unitsPerCarton)
+        : undefined,
   }
 }
 

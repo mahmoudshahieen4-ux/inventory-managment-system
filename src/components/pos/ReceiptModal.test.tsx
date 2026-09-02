@@ -62,7 +62,7 @@ describe('ReceiptModal', () => {
       screen.getByRole('cell', { name: 'Dark Chocolate Bar' })
     ).toBeInTheDocument()
     expect(screen.getByRole('cell', { name: '2' })).toBeInTheDocument()
-    expect(screen.getByRole('cell', { name: '$4.98' })).toBeInTheDocument()
+    expect(screen.getByRole('cell', { name: '4.98 ج.م' })).toBeInTheDocument()
   })
 
   it('shows subtotal, tax, final amount and the footer note', () => {
@@ -89,7 +89,9 @@ describe('ReceiptModal', () => {
     expect(printSpy).toHaveBeenCalledTimes(2)
 
     // The dialog's built-in "X" shares the accessible name "Close"; pick the footer button
-    const closeButton = screen.getAllByRole('button', { name: 'Close' })[0] as HTMLElement
+    const closeButton = screen.getAllByRole('button', {
+      name: 'Close',
+    })[0] as HTMLElement
     await user.click(closeButton)
     expect(onOpenChange).toHaveBeenCalledWith(false)
 

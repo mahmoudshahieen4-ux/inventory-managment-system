@@ -33,6 +33,7 @@ function getDb(): Promise<Database> {
           selling_price REAL NOT NULL DEFAULT 0,
           category TEXT NOT NULL DEFAULT '',
           unit TEXT,
+          units_per_carton INTEGER,
           updated_at TEXT NOT NULL
         )
       `)
@@ -73,6 +74,11 @@ function getDb(): Promise<Database> {
       // Lightweight migration for databases created before the unit column existed.
       await db
         .execute('ALTER TABLE products ADD COLUMN unit TEXT')
+        .catch(() => {
+          // Column already exists — nothing to do.
+        })
+      await db
+        .execute('ALTER TABLE products ADD COLUMN units_per_carton INTEGER')
         .catch(() => {
           // Column already exists — nothing to do.
         })
@@ -117,6 +123,7 @@ interface ProductRow {
   selling_price: number
   category: string
   unit: string | null
+  units_per_carton: number | null
   updated_at: string
 }
 
@@ -131,6 +138,7 @@ function toProduct(row: ProductRow): Product {
     sellingPrice: row.selling_price,
     category: row.category,
     unit: row.unit ?? undefined,
+    unitsPerCarton: row.units_per_carton ?? undefined,
   }
 }
 
@@ -141,7 +149,7 @@ function toProduct(row: ProductRow): Product {
 export async function fetchProducts(): Promise<Product[]> {
   const db = await getDb()
   const rows = await db.select<ProductRow[]>(
-    'SELECT id, name, sku, quantity, min_threshold, purchase_price, selling_price, category, unit, updated_at FROM products ORDER BY name'
+    'SELECT id, name, sku, quantity, min_threshold, purchase_price, selling_price, category, unit, units_per_carton, updated_at FROM products ORDER BY name'
   )
   return rows.map(toProduct)
 }
@@ -149,7 +157,7 @@ export async function fetchProducts(): Promise<Product[]> {
 export async function insertProduct(product: Product): Promise<void> {
   const db = await getDb()
   await db.execute(
-    'INSERT INTO products (id, name, sku, quantity, min_threshold, purchase_price, selling_price, category, unit, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
+    'INSERT INTO products (id, name, sku, quantity, min_threshold, purchase_price, selling_price, category, unit, units_per_carton, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
     [
       product.id,
       product.name,
@@ -160,6 +168,7 @@ export async function insertProduct(product: Product): Promise<void> {
       product.sellingPrice,
       product.category,
       product.unit ?? null,
+      product.unitsPerCarton ?? null,
       new Date().toISOString(),
     ]
   )
@@ -168,7 +177,7 @@ export async function insertProduct(product: Product): Promise<void> {
 export async function updateProductRow(product: Product): Promise<void> {
   const db = await getDb()
   await db.execute(
-    'UPDATE products SET name = $1, sku = $2, quantity = $3, min_threshold = $4, purchase_price = $5, selling_price = $6, category = $7, unit = $8, updated_at = $9 WHERE id = $10',
+    'UPDATE products SET name = $1, sku = $2, quantity = $3, min_threshold = $4, purchase_price = $5, selling_price = $6, category = $7, unit = $8, units_per_carton = $9, updated_at = $10 WHERE id = $11',
     [
       product.name,
       product.sku,
@@ -178,6 +187,7 @@ export async function updateProductRow(product: Product): Promise<void> {
       product.sellingPrice,
       product.category,
       product.unit ?? null,
+      product.unitsPerCarton ?? null,
       new Date().toISOString(),
       product.id,
     ]

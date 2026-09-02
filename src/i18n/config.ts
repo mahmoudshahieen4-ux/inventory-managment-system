@@ -15,12 +15,17 @@ const rtlLanguages = ['ar', 'he', 'fa', 'ur']
 
 i18n.use(initReactI18next).init({
   resources,
-  lng: 'en',
+  lng: 'ar',
   fallbackLng: 'en',
   interpolation: {
     escapeValue: false, // React already escapes
   },
 })
+
+// Apply the default (Arabic/RTL) document direction immediately so the first
+// paint is already right-to-left before the async language init completes.
+document.documentElement.lang = 'ar'
+document.documentElement.dir = 'rtl'
 
 // Update document direction and lang on language change
 i18n.on('languageChanged', lng => {

@@ -86,9 +86,16 @@ export function ProductCatalog() {
                   </Badge>
                 </div>
 
-                <p className="text-base font-semibold">
-                  {formatMoney(product.sellingPrice)}
-                </p>
+                <div className="flex items-end justify-between gap-2">
+                  <p className="text-base font-semibold">
+                    {formatMoney(product.sellingPrice)}
+                  </p>
+                  {product.unit && (
+                    <span className="text-muted-foreground text-xs">
+                      {product.unit}
+                    </span>
+                  )}
+                </div>
 
                 <div className="mt-auto flex items-center justify-between gap-2">
                   {inCart > 0 ? (

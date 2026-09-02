@@ -26,6 +26,7 @@ interface ProductFormValues {
   sku: string
   category: string
   unit: string
+  unitsPerCarton: string
   purchasePrice: string
   sellingPrice: string
   quantity: string
@@ -46,6 +47,7 @@ const EMPTY_VALUES: ProductFormValues = {
   sku: '',
   category: '',
   unit: '',
+  unitsPerCarton: '',
   purchasePrice: '',
   sellingPrice: '',
   quantity: '',
@@ -65,6 +67,9 @@ function toFormValues(product: Product): ProductFormValues {
     sku: product.sku,
     category: product.category,
     unit: product.unit ?? '',
+    unitsPerCarton: product.unitsPerCarton
+      ? String(product.unitsPerCarton)
+      : '',
     purchasePrice: String(product.purchasePrice),
     sellingPrice: String(product.sellingPrice),
     quantity: String(product.quantity),
@@ -87,6 +92,15 @@ function validate(values: ProductFormValues, t: Translate): FormErrors {
   if (!values.name.trim()) errors.name = required
   if (!values.sku.trim()) errors.sku = required
   if (!values.category.trim()) errors.category = required
+
+  if (values.unit === 'كرتونة') {
+    const unitsPerCarton = parseNumber(values.unitsPerCarton)
+    if (values.unitsPerCarton.trim() === '') {
+      errors.unitsPerCarton = required
+    } else if (!Number.isInteger(unitsPerCarton) || unitsPerCarton < 1) {
+      errors.unitsPerCarton = t('inventory.form.validation.positiveInteger')
+    }
+  }
 
   for (const field of NUMBER_FIELDS) {
     const number = parseNumber(values[field])
@@ -132,7 +146,7 @@ export function ProductFormModal({
   }
 
   const setField = (field: keyof ProductFormValues) => {
-    return (event: ChangeEvent<HTMLInputElement>) => {
+    return (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
       setValues(current => ({ ...current, [field]: event.target.value }))
       setErrors(current => ({ ...current, [field]: undefined }))
     }
@@ -150,6 +164,10 @@ export function ProductFormModal({
       sku: values.sku.trim(),
       category: values.category.trim(),
       unit: values.unit.trim() || undefined,
+      unitsPerCarton:
+        values.unit === 'كرتونة'
+          ? parseNumber(values.unitsPerCarton)
+          : undefined,
       purchasePrice: parseNumber(values.purchasePrice),
       sellingPrice: parseNumber(values.sellingPrice),
       quantity: parseNumber(values.quantity),
@@ -237,11 +255,38 @@ export function ProductFormModal({
             <Label htmlFor="product-unit">{t('inventory.form.unit')}</Label>
             <Input
               id="product-unit"
+              list="product-unit-options"
               value={values.unit}
               onChange={setField('unit')}
               placeholder={t('inventory.form.unitPlaceholder')}
             />
+            <datalist id="product-unit-options">
+              <option value="علبة" />
+              <option value="كرتونة" />
+            </datalist>
           </div>
+
+          {values.unit === 'كرتونة' && (
+            <div className="grid gap-1.5">
+              <Label htmlFor="product-units-per-carton">
+                {t('inventory.form.unitsPerCarton')}
+              </Label>
+              <Input
+                id="product-units-per-carton"
+                type="number"
+                min={1}
+                step="1"
+                value={values.unitsPerCarton}
+                onChange={setField('unitsPerCarton')}
+                aria-invalid={errors.unitsPerCarton ? true : undefined}
+              />
+              {errors.unitsPerCarton && (
+                <p className="text-destructive text-sm" role="alert">
+                  {errors.unitsPerCarton}
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="grid gap-1.5">
             <Label htmlFor="product-purchase-price">

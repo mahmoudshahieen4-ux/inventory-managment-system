@@ -41,7 +41,7 @@ export function MainWindowContent({
     <div className={cn('flex h-full flex-col bg-background', className)}>
       {children || (
         <>
-          <div className="border-b px-4 py-2">
+          <div className="border-b px-3 py-2 sm:px-4">
             <ViewSwitcher />
           </div>
           <div className="min-h-0 flex-1">

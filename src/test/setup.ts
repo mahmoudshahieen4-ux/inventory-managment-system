@@ -1,5 +1,19 @@
 import '@testing-library/jest-dom'
-import { vi } from 'vitest'
+import { beforeEach, vi } from 'vitest'
+
+import i18n from '@/i18n/config'
+
+// The application defaults to Arabic/RTL; pin the test harness to English so
+// component assertions stay deterministic regardless of runtime language state.
+beforeEach(async () => {
+  await i18n.changeLanguage('en')
+})
+
+// App.tsx calls initializeLanguage() inside its mount effect; in tests that would
+// flip the UI to Arabic mid-render. Mock it to a no-op here.
+vi.mock('@/i18n/language-init', () => ({
+  initializeLanguage: vi.fn().mockResolvedValue(undefined),
+}))
 
 // jsdom does not implement the Pointer Capture API, but Radix UI primitives
 // (e.g. Select) call it inside their pointer event handlers. Provide no-op

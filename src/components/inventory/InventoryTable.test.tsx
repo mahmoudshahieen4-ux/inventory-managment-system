@@ -93,24 +93,24 @@ describe('InventoryTable', () => {
     render(<InventoryTable />)
 
     const row = screen.getByText('Espresso Beans 1kg').closest('tr')
-    expect(row?.className).toContain('bg-red-950/30')
-    expect(row?.className).toContain('border-s-red-500')
+    expect(row?.className).toContain('bg-rose-950/40')
+    expect(row?.className).toContain('border-s-rose-800/40')
   })
 
   it('highlights low stock rows in amber', () => {
     render(<InventoryTable />)
 
     const row = screen.getByText('Whole Milk 1L').closest('tr')
-    expect(row?.className).toContain('bg-amber-950/30')
-    expect(row?.className).toContain('border-s-amber-500')
+    expect(row?.className).toContain('bg-amber-950/40')
+    expect(row?.className).toContain('border-s-amber-800/40')
   })
 
   it('does not highlight in stock rows', () => {
     render(<InventoryTable />)
 
     const row = screen.getByText('Dark Chocolate Bar').closest('tr')
-    expect(row?.className).not.toContain('bg-red-950/30')
-    expect(row?.className).not.toContain('bg-amber-950/30')
+    expect(row?.className).not.toContain('bg-rose-950/40')
+    expect(row?.className).not.toContain('bg-amber-950/40')
   })
 
   it('sorts rows by name when clicking the name header', async () => {

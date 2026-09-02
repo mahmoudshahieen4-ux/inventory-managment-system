@@ -26,11 +26,11 @@ export function SalesHistory({ onReprint }: SalesHistoryProps) {
   }
 
   return (
-    <ul className="min-h-0 flex-1 space-y-2 overflow-y-auto pb-1">
+    <ul className="min-h-0 flex-1 space-y-3 overflow-y-auto pb-1">
       {sales.map(sale => (
         <li
           key={sale.id}
-          className="flex items-center justify-between gap-3 rounded-lg border p-3"
+          className="flex items-center justify-between gap-4 rounded-lg border p-4"
         >
           <div className="min-w-0">
             <p className="text-sm font-medium">{sale.invoiceNumber}</p>

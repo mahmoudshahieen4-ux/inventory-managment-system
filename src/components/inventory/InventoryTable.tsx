@@ -39,6 +39,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { getStockStatus } from '@/lib/stock-status'
+import { formatMoney } from '@/lib/money'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useInventoryStore } from '@/store/useInventoryStore'
@@ -47,13 +48,6 @@ import { ProductFormModal } from './ProductFormModal'
 import { stockStatusStyles } from './stock-status-config'
 
 type StockFilter = StockStatus | 'ALL'
-
-function formatCurrency(value: number): string {
-  return new Intl.NumberFormat(undefined, {
-    style: 'currency',
-    currency: 'USD',
-  }).format(value)
-}
 
 type SortKey =
   | 'sku'
@@ -119,7 +113,7 @@ export function InventoryTable() {
   }
 
   // ACTION rows + status column. Admins get an extra actions column.
-  const columnCount = isAdmin ? 8 : 7
+  const columnCount = isAdmin ? 9 : 8
 
   const handleOpenCreate = () => {
     setEditingProduct(null)
@@ -240,6 +234,9 @@ export function InventoryTable() {
               <TableRow className="bg-muted/40 hover:bg-muted/40">
                 {renderSortableHead('sku', t('inventory.column.sku'))}
                 {renderSortableHead('name', t('inventory.column.name'))}
+                <TableHead className={headClass}>
+                  {t('inventory.column.unit')}
+                </TableHead>
                 {renderSortableHead(
                   'quantity',
                   t('inventory.column.quantity'),
@@ -294,6 +291,18 @@ export function InventoryTable() {
                     <TableCell className="font-medium">
                       {product.name}
                     </TableCell>
+                    <TableCell className="text-sm">
+                      {product.unit ?? t('inventory.unit.notSet')}
+                      {product.unit === 'كرتونة' && product.unitsPerCarton && (
+                        <span className="text-muted-foreground ms-1 text-xs">
+                          (
+                          {t('inventory.unit.boxesCount', {
+                            count: product.unitsPerCarton,
+                          })}
+                          )
+                        </span>
+                      )}
+                    </TableCell>
                     <TableCell className="text-end font-semibold tabular-nums">
                       {product.quantity}
                       {product.unit && (
@@ -306,10 +315,10 @@ export function InventoryTable() {
                       {product.minThreshold}
                     </TableCell>
                     <TableCell className="text-end tabular-nums">
-                      {formatCurrency(product.purchasePrice)}
+                      {formatMoney(product.purchasePrice)}
                     </TableCell>
                     <TableCell className="text-end font-semibold tabular-nums">
-                      {formatCurrency(product.sellingPrice)}
+                      {formatMoney(product.sellingPrice)}
                     </TableCell>
                     <TableCell>
                       <Badge
