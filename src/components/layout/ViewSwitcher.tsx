@@ -18,11 +18,11 @@ export function ViewSwitcher() {
         }
       >
         <TabsList>
-          <TabsTrigger value="inventory">
+          <TabsTrigger value="inventory" className="px-4">
             <Boxes className="size-4" />
             {t('nav.inventory')}
           </TabsTrigger>
-          <TabsTrigger value="pos">
+          <TabsTrigger value="pos" className="px-4">
             <ShoppingCart className="size-4" />
             {t('nav.pos')}
           </TabsTrigger>

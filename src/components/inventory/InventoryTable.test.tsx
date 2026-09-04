@@ -109,26 +109,27 @@ describe('InventoryTable', () => {
     expect(screen.queryByText('Dark Chocolate Bar')).not.toBeInTheDocument()
   })
 
-  it('highlights out of stock rows in red', () => {
+  it('keeps out of stock rows white and uses a subtle separator', () => {
     render(<InventoryTable />)
 
     const row = screen.getByText('Espresso Beans 1kg').closest('tr')
-    expect(row?.className).toContain('bg-rose-950/40')
-    expect(row?.className).toContain('border-s-rose-800/40')
+    expect(row?.className).toContain('bg-white')
+    expect(row?.className).toContain('border-[#E5E7EB]')
   })
 
-  it('highlights low stock rows in amber', () => {
+  it('keeps low stock rows white and uses a subtle separator', () => {
     render(<InventoryTable />)
 
     const row = screen.getByText('Whole Milk 1L').closest('tr')
-    expect(row?.className).toContain('bg-amber-950/40')
-    expect(row?.className).toContain('border-s-amber-800/40')
+    expect(row?.className).toContain('bg-white')
+    expect(row?.className).toContain('border-[#E5E7EB]')
   })
 
   it('does not highlight in stock rows', () => {
     render(<InventoryTable />)
 
     const row = screen.getByText('Dark Chocolate Bar').closest('tr')
+    expect(row?.className).toContain('bg-white')
     expect(row?.className).not.toContain('bg-rose-950/40')
     expect(row?.className).not.toContain('bg-amber-950/40')
   })
