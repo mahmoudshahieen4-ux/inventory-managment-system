@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { Check, Coins, UsersRound } from 'lucide-react'
+import { Check, Coins, Lock, UsersRound } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -24,7 +24,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import { toDateKey } from '@/lib/payroll'
+import { isFutureDate, toDateKey } from '@/lib/payroll'
 import { usePayrollStore } from '@/store/usePayrollStore'
 import type {
   AttendanceRecord,
@@ -38,10 +38,20 @@ interface AttendanceRowProps {
   dateKey: string
   /** Already-saved attendance for this worker/day, when present. */
   existing?: AttendanceRecord
+  /**
+   * Why the row is read-only: the day is in the future, or the month's
+   * salary was already paid (frozen). `null` when editing is allowed.
+   */
+  lockReason: 'future' | 'paid' | null
 }
 
 /** One worker's status toggle, deduction and advance controls for a day. */
-function AttendanceRow({ worker, dateKey, existing }: AttendanceRowProps) {
+function AttendanceRow({
+  worker,
+  dateKey,
+  existing,
+  lockReason,
+}: AttendanceRowProps) {
   const { t } = useTranslation()
   const recordAttendance = usePayrollStore(state => state.recordAttendance)
   const addAdvance = usePayrollStore(state => state.addAdvance)
@@ -53,7 +63,22 @@ function AttendanceRow({ worker, dateKey, existing }: AttendanceRowProps) {
   )
   const [advance, setAdvance] = useState('')
 
+  const locked = lockReason !== null
+  const lockedLabel =
+    lockReason === 'paid'
+      ? t('payroll.attendance.lockedPaid')
+      : t('payroll.attendance.lockedFuture')
+
   const handleSave = () => {
+    // Mirrors the store guards so invalid clicks fail fast in the UI.
+    if (lockReason === 'future') {
+      toast.error(t('payroll.errors.futureDate'))
+      return
+    }
+    if (lockReason === 'paid') {
+      toast.error(t('payroll.errors.monthPaid'))
+      return
+    }
     recordAttendance(worker.id, dateKey, {
       status,
       deductionAmount: deduction === '' ? undefined : Number(deduction),
@@ -62,6 +87,14 @@ function AttendanceRow({ worker, dateKey, existing }: AttendanceRowProps) {
   }
 
   const handleAdvance = () => {
+    if (lockReason === 'future' || lockReason === 'paid') {
+      toast.error(
+        lockReason === 'future'
+          ? t('payroll.errors.futureDate')
+          : t('payroll.errors.monthPaid')
+      )
+      return
+    }
     const amount = Number(advance)
     if (!Number.isFinite(amount) || amount <= 0) return
     addAdvance(worker.id, { amount, date: dateKey })
@@ -88,6 +121,7 @@ function AttendanceRow({ worker, dateKey, existing }: AttendanceRowProps) {
           size="sm"
           variant="outline"
           value={status}
+          disabled={locked}
           onValueChange={value => {
             if (
               value === 'PRESENT' ||
@@ -132,6 +166,7 @@ function AttendanceRow({ worker, dateKey, existing }: AttendanceRowProps) {
           value={deduction}
           onChange={event => setDeduction(event.target.value)}
           placeholder="0.00"
+          disabled={locked}
           aria-label={t('payroll.attendance.deductionAria', {
             name: worker.name,
           })}
@@ -149,6 +184,7 @@ function AttendanceRow({ worker, dateKey, existing }: AttendanceRowProps) {
             value={advance}
             onChange={event => setAdvance(event.target.value)}
             placeholder="0.00"
+            disabled={locked}
             aria-label={t('payroll.attendance.advanceAria', {
               name: worker.name,
             })}
@@ -159,6 +195,7 @@ function AttendanceRow({ worker, dateKey, existing }: AttendanceRowProps) {
             size="icon-sm"
             title={t('payroll.attendance.addAdvance', { name: worker.name })}
             onClick={handleAdvance}
+            disabled={locked}
           >
             <Coins />
           </Button>
@@ -166,10 +203,25 @@ function AttendanceRow({ worker, dateKey, existing }: AttendanceRowProps) {
       </TableCell>
 
       <TableCell className="text-end">
-        <Button type="button" variant="outline" size="sm" onClick={handleSave}>
-          <Check />
-          {t('payroll.attendance.save')}
-        </Button>
+        {locked ? (
+          <span
+            className="text-muted-foreground inline-flex items-center gap-1 text-xs"
+            title={lockedLabel}
+          >
+            <Lock className="size-3.5" />
+            {lockedLabel}
+          </span>
+        ) : (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleSave}
+          >
+            <Check />
+            {t('payroll.attendance.save')}
+          </Button>
+        )}
       </TableCell>
     </TableRow>
   )
@@ -178,9 +230,25 @@ export function DailyAttendanceView() {
   const { t } = useTranslation()
   const workers = usePayrollStore(state => state.workers)
   const attendance = usePayrollStore(state => state.attendance)
+  const salaryPayments = usePayrollStore(state => state.salaryPayments)
   const [selectedDate, setSelectedDate] = useState<Date>(() => new Date())
 
   const dateKey = toDateKey(selectedDate)
+  // "workerId:YYYY-MM" lookup — a hit means the month is paid (frozen).
+  const paidMonths = useMemo(
+    () =>
+      new Set(
+        salaryPayments.map(
+          payment => `${payment.workerId}:${payment.monthYear}`
+        )
+      ),
+    [salaryPayments]
+  )
+  const lockReasonFor = (workerId: string): 'future' | 'paid' | null => {
+    if (isFutureDate(dateKey)) return 'future'
+    return paidMonths.has(`${workerId}:${dateKey.slice(0, 7)}`) ? 'paid' : null
+  }
+
   const activeWorkers = workers.filter(worker => worker.status === 'ACTIVE')
   const dayRecords = attendance.filter(record => record.date === dateKey)
   const presentCount = dayRecords.filter(
@@ -212,8 +280,15 @@ export function DailyAttendanceView() {
             <DatePicker
               value={selectedDate}
               onChange={date => {
-                if (date) setSelectedDate(date)
+                if (!date) return
+                // Future days can never be selected for attendance.
+                if (isFutureDate(toDateKey(date))) {
+                  toast.error(t('payroll.errors.futureDate'))
+                  return
+                }
+                setSelectedDate(date)
               }}
+              disabled={date => date > new Date()}
             />
           </div>
 
@@ -269,6 +344,7 @@ export function DailyAttendanceView() {
                   existing={dayRecords.find(
                     record => record.workerId === worker.id
                   )}
+                  lockReason={lockReasonFor(worker.id)}
                 />
               ))}
 

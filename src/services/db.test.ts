@@ -4,13 +4,16 @@ import {
   deleteProductRow,
   deleteWorkerRow,
   fetchProducts,
+  fetchSalaryPayments,
   fetchSales,
   fetchWorkersData,
   insertProduct,
   isTauriRuntime,
   persistAdvance,
   persistAttendance,
+  persistOperatingExpense,
   persistSale,
+  persistSalaryPayment,
   persistWorker,
   updateProductRow,
 } from './db'
@@ -47,5 +50,12 @@ describe('db service', () => {
     await expect(persistAttendance({ id: 'x' } as never)).rejects.toThrow()
     await expect(persistAdvance({ id: 'x' } as never)).rejects.toThrow()
     await expect(deleteWorkerRow('x')).rejects.toThrow()
+
+    // Salary disbursement & operating-expense functions behave the same.
+    await expect(fetchSalaryPayments()).rejects.toThrow()
+    await expect(persistSalaryPayment({ id: 'x' } as never)).rejects.toThrow()
+    await expect(
+      persistOperatingExpense({ id: 'x' } as never)
+    ).rejects.toThrow()
   })
 })

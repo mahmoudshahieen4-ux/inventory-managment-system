@@ -14,6 +14,8 @@ interface DatePickerProps {
   onChange?: (date: Date | undefined) => void
   placeholder?: string
   className?: string
+  /** Returns true for dates that cannot be selected (e.g. future days). */
+  disabled?: (date: Date) => boolean
 }
 
 function DatePicker({
@@ -21,6 +23,7 @@ function DatePicker({
   onChange,
   placeholder = 'Select date',
   className,
+  disabled,
 }: DatePickerProps) {
   const [open, setOpen] = React.useState(false)
 
@@ -40,6 +43,7 @@ function DatePicker({
           mode="single"
           selected={value}
           captionLayout="dropdown"
+          disabled={disabled}
           onSelect={date => {
             onChange?.(date)
             setOpen(false)

@@ -13,6 +13,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -37,10 +38,15 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { monthName } from '@/lib/payroll'
+import { monthName, monthYearKey } from '@/lib/payroll'
 import { formatMoney } from '@/lib/money'
+import { formatTransactionTimestamp } from '@/lib/date-time'
+import { useAuthStore } from '@/store/useAuthStore'
 import { usePayrollStore } from '@/store/usePayrollStore'
-import type { MonthlyPayrollSummary } from '@/types/payroll'
+import type {
+  MonthlyPayrollSummary,
+  SalaryPaymentRecord,
+} from '@/types/payroll'
 
 interface PaymentDialogProps {
   open: boolean
@@ -62,11 +68,20 @@ function PaymentDialog({
   onConfirm,
 }: PaymentDialogProps) {
   const { t } = useTranslation()
+  // Cash acknowledgement — confirm stays disabled until the admin checks it.
+  const [cashConfirmed, setCashConfirmed] = useState(false)
   if (!summary) return null
   const period = `${monthName(year, month, i18n.resolvedLanguage ?? 'en')} ${year}`
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={nextOpen => {
+        // Reset the cash acknowledgement whenever the dialog is dismissed.
+        if (!nextOpen) setCashConfirmed(false)
+        onOpenChange(nextOpen)
+      }}
+    >
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{t('payroll.summary.paymentDetails')}</DialogTitle>
@@ -125,6 +140,16 @@ function PaymentDialog({
           </div>
         </div>
 
+        {/* Cash confirmation (تأكيد استلام العامل للمبلغ نقداً). */}
+        <label className="flex items-start gap-2 rounded-md border p-3 text-sm">
+          <Checkbox
+            checked={cashConfirmed}
+            onCheckedChange={checked => setCashConfirmed(checked === true)}
+            aria-label={t('payroll.summary.cashConfirmation')}
+          />
+          <span>{t('payroll.summary.cashConfirmation')}</span>
+        </label>
+
         <DialogFooter className="mt-2">
           <Button
             type="button"
@@ -136,8 +161,10 @@ function PaymentDialog({
           </Button>
           <Button
             type="button"
+            disabled={!cashConfirmed}
             onClick={() => {
               onConfirm()
+              setCashConfirmed(false)
               onOpenChange(false)
             }}
           >
@@ -154,13 +181,17 @@ export function MonthlyPayrollSummary() {
   const workers = usePayrollStore(state => state.workers)
   const attendance = usePayrollStore(state => state.attendance)
   const advances = usePayrollStore(state => state.advances)
+  // Persisted payouts: drives the PAID badges and receipt printing.
+  const salaryPayments = usePayrollStore(state => state.salaryPayments)
 
   const [year, setYear] = useState(() => new Date().getFullYear())
   const [month, setMonth] = useState(() => new Date().getMonth() + 1)
   const [payingSummary, setPayingSummary] =
     useState<MonthlyPayrollSummary | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
-  const [paidKeys, setPaidKeys] = useState<Set<string>>(() => new Set())
+  /** Last finalized payout — drives the printable receipt dialog. */
+  const [receiptPayment, setReceiptPayment] =
+    useState<SalaryPaymentRecord | null>(null)
 
   const years = useMemo(() => {
     const available = new Set<number>([year])
@@ -187,9 +218,6 @@ export function MonthlyPayrollSummary() {
     { totalEarnings: 0, totalDeductions: 0, totalAdvances: 0, netPayable: 0 }
   )
 
-  const paymentKey = (summary: MonthlyPayrollSummary) =>
-    `${summary.workerId}-${year}-${month}`
-
   const handleOpenPay = (summary: MonthlyPayrollSummary) => {
     setPayingSummary(summary)
     setDialogOpen(true)
@@ -197,14 +225,24 @@ export function MonthlyPayrollSummary() {
 
   const handleConfirmPayment = () => {
     if (!payingSummary) return
-    const key = paymentKey(payingSummary)
-    setPaidKeys(current => new Set(current).add(key))
+    // ADMIN-only screen — the active role doubles as the "paid by" stamp.
+    const payment = usePayrollStore
+      .getState()
+      .paySalary(
+        payingSummary.workerId,
+        year,
+        month,
+        useAuthStore.getState().role
+      )
+    if (!payment) return
     toast.success(
       t('payroll.summary.paidToast', {
         name: payingSummary.workerName,
         period,
       })
     )
+    // Open the printable receipt for the finalized payout.
+    setReceiptPayment(payment)
   }
 
   const headClass =
@@ -295,7 +333,13 @@ export function MonthlyPayrollSummary() {
             </TableHeader>
             <TableBody>
               {summaries.map(summary => {
-                const isPaid = paidKeys.has(paymentKey(summary))
+                // PAID status comes from the persisted salary_payments rows.
+                const paidPayment = salaryPayments.find(
+                  payment =>
+                    payment.workerId === summary.workerId &&
+                    payment.monthYear === monthYearKey(year, month)
+                )
+                const isPaid = paidPayment !== undefined
                 const deductionsAndAdvances =
                   summary.totalDeductions + summary.totalAdvances
                 return (
@@ -330,12 +374,22 @@ export function MonthlyPayrollSummary() {
                     </TableCell>
                     <TableCell className="text-end">
                       {isPaid ? (
-                        <Badge
-                          variant="outline"
-                          className="border-green-200 bg-green-50 text-green-800 dark:border-emerald-800/40 dark:bg-emerald-950/40 dark:text-[#34D399]"
-                        >
-                          {t('payroll.summary.paid')}
-                        </Badge>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <Badge className="border-green-200 bg-green-100 text-green-800 dark:border-emerald-800/40 dark:bg-emerald-950/40 dark:text-[#34D399]">
+                            {t('payroll.summary.paidBadge')}
+                          </Badge>
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            title={t('payroll.summary.printReceipt')}
+                            aria-label={t('payroll.summary.printReceipt')}
+                            onClick={() =>
+                              setReceiptPayment(paidPayment ?? null)
+                            }
+                          >
+                            <Receipt />
+                          </Button>
+                        </div>
                       ) : (
                         <Button
                           variant="outline"
@@ -403,6 +457,72 @@ export function MonthlyPayrollSummary() {
         month={month}
         onConfirm={handleConfirmPayment}
       />
+
+      {/* Printable salary receipt (إيصال صرف الراتب). */}
+      <Dialog
+        open={receiptPayment !== null}
+        onOpenChange={open => {
+          if (!open) setReceiptPayment(null)
+        }}
+      >
+        {receiptPayment && (
+          <DialogContent className="sm:max-w-sm print:border-0 print:shadow-none">
+            <DialogHeader>
+              <DialogTitle>{t('payroll.summary.receiptTitle')}</DialogTitle>
+              <DialogDescription>
+                {t('payroll.summary.paymentDescription', {
+                  name:
+                    workers.find(
+                      worker => worker.id === receiptPayment.workerId
+                    )?.name ?? receiptPayment.workerId,
+                  period: receiptPayment.monthYear,
+                })}
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="grid gap-3 text-sm">
+              <div className="flex items-center justify-between border-b pb-2">
+                <span className="text-muted-foreground">
+                  {t('payroll.summary.worker')}
+                </span>
+                <span className="font-medium">
+                  {workers.find(worker => worker.id === receiptPayment.workerId)
+                    ?.name ?? receiptPayment.workerId}
+                </span>
+              </div>
+              <div className="flex items-center justify-between border-b pb-2">
+                <span className="text-muted-foreground">
+                  {t('payroll.summary.netPayable')}
+                </span>
+                <span className="text-lg font-bold tabular-nums">
+                  {formatMoney(receiptPayment.netAmount)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between border-b pb-2">
+                <span className="text-muted-foreground">
+                  {t('payroll.summary.paidByLabel')}
+                </span>
+                <span className="font-medium">{receiptPayment.paidBy}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">
+                  {t('payroll.summary.paidAtLabel')}
+                </span>
+                <span className="tabular-nums">
+                  {formatTransactionTimestamp(receiptPayment.paidAt)}
+                </span>
+              </div>
+            </div>
+
+            <DialogFooter className="mt-2">
+              <Button type="button" onClick={() => window.print()}>
+                <Printer />
+                {t('payroll.summary.printReceipt')}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        )}
+      </Dialog>
     </Card>
   )
 }

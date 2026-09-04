@@ -7,7 +7,13 @@
 import Database from '@tauri-apps/plugin-sql'
 
 import type { Product } from '@/types/inventory'
-import type { AdvanceRecord, AttendanceRecord, Worker } from '@/types/payroll'
+import type {
+  AdvanceRecord,
+  AttendanceRecord,
+  OperatingExpenseRecord,
+  SalaryPaymentRecord,
+  Worker,
+} from '@/types/payroll'
 import type { CreditNote, Sale, SaleItem } from '@/types/sales'
 
 /** True only inside the Tauri desktop webview. */
@@ -116,6 +122,35 @@ function getDb(): Promise<Database> {
           amount REAL NOT NULL DEFAULT 0,
           date TEXT NOT NULL,
           notes TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL
+        )
+      `)
+      // Finalized monthly salary payouts (see SalaryPaymentRecord).
+      // UNIQUE (worker_id, month_year) enforces one payout per worker/month,
+      // mirroring the isSalaryPaid() lifecycle enforced in the payroll store.
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS salary_payments (
+          id TEXT PRIMARY KEY,
+          worker_id TEXT NOT NULL REFERENCES workers(id) ON DELETE CASCADE,
+          month_year TEXT NOT NULL,
+          base_amount REAL NOT NULL,
+          total_deductions REAL NOT NULL,
+          total_advances REAL NOT NULL,
+          net_amount REAL NOT NULL,
+          paid_at TEXT NOT NULL,
+          paid_by TEXT NOT NULL,
+          UNIQUE (worker_id, month_year)
+        )
+      `)
+      // Operating expense log — salary payouts are recorded here so that net
+      // profits in reports reflect employee wages.
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS operating_expenses (
+          id TEXT PRIMARY KEY,
+          expense_date TEXT NOT NULL,
+          category TEXT NOT NULL,
+          description TEXT NOT NULL,
+          amount REAL NOT NULL,
           created_at TEXT NOT NULL
         )
       `)
@@ -412,7 +447,7 @@ export async function persistCreditNote(note: CreditNote): Promise<void> {
 export async function fetchCreditNotes(): Promise<CreditNote[]> {
   const db = await getDb()
   const rows = await db.select<
-    Array<{
+    {
       id: string
       credit_note_number: string
       original_invoice_number: string
@@ -420,12 +455,12 @@ export async function fetchCreditNotes(): Promise<CreditNote[]> {
       total_amount: number
       cashier_name: string
       created_at: string
-    }>
+    }[]
   >(
     'SELECT id, credit_note_number, original_invoice_number, original_sale_id, total_amount, cashier_name, created_at FROM credit_notes ORDER BY created_at DESC'
   )
   const items = await db.select<
-    Array<{
+    {
       credit_note_id: string
       product_id: string
       product_name: string
@@ -433,7 +468,7 @@ export async function fetchCreditNotes(): Promise<CreditNote[]> {
       sku: string
       unit_price: number
       total_price: number
-    }>
+    }[]
   >(
     'SELECT credit_note_id, product_id, product_name, quantity, sku, unit_price, total_price FROM credit_note_items'
   )
@@ -647,7 +682,7 @@ export async function persistWorker(worker: Worker): Promise<void> {
   )
 }
 
-/** Removes a worker and cascades to their attendance/advance records. */
+/** Removes a worker and cascades to their attendance/advance/salary rows. */
 export async function deleteWorkerRow(id: string): Promise<void> {
   const db = await getDb()
   await db.execute('DELETE FROM workers WHERE id = $1', [id])
@@ -693,6 +728,87 @@ export async function persistAdvance(record: AdvanceRecord): Promise<void> {
       record.date,
       record.notes,
       record.createdAt,
+    ]
+  )
+}
+
+interface SalaryPaymentRow {
+  id: string
+  worker_id: string
+  month_year: string
+  base_amount: number
+  total_deductions: number
+  total_advances: number
+  net_amount: number
+  paid_at: string
+  paid_by: string
+}
+
+function toSalaryPayment(row: SalaryPaymentRow): SalaryPaymentRecord {
+  return {
+    id: row.id,
+    workerId: row.worker_id,
+    monthYear: row.month_year,
+    baseAmount: row.base_amount,
+    totalDeductions: row.total_deductions,
+    totalAdvances: row.total_advances,
+    netAmount: row.net_amount,
+    paidAt: row.paid_at,
+    paidBy: row.paid_by,
+  }
+}
+
+/** Loads every finalized salary payout (restores PAID months after restart). */
+export async function fetchSalaryPayments(): Promise<SalaryPaymentRecord[]> {
+  const db = await getDb()
+  const rows = await db.select<SalaryPaymentRow[]>(
+    'SELECT id, worker_id, month_year, base_amount, total_deductions, total_advances, net_amount, paid_at, paid_by FROM salary_payments ORDER BY paid_at DESC'
+  )
+  return rows.map(toSalaryPayment)
+}
+
+/**
+ * Inserts a finalized monthly salary payout. `INSERT OR REPLACE` keeps the
+ * function idempotent; the UNIQUE (worker_id, month_year) constraint is the
+ * database-level guard against paying the same month twice.
+ */
+export async function persistSalaryPayment(
+  payment: SalaryPaymentRecord
+): Promise<void> {
+  const db = await getDb()
+  await db.execute(
+    `INSERT OR REPLACE INTO salary_payments
+       (id, worker_id, month_year, base_amount, total_deductions,
+        total_advances, net_amount, paid_at, paid_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    [
+      payment.id,
+      payment.workerId,
+      payment.monthYear,
+      payment.baseAmount,
+      payment.totalDeductions,
+      payment.totalAdvances,
+      payment.netAmount,
+      payment.paidAt,
+      payment.paidBy,
+    ]
+  )
+}
+
+/** Logs an operating expense (e.g. a salary payout) for profit reporting. */
+export async function persistOperatingExpense(
+  expense: OperatingExpenseRecord
+): Promise<void> {
+  const db = await getDb()
+  await db.execute(
+    'INSERT INTO operating_expenses (id, expense_date, category, description, amount, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
+    [
+      expense.id,
+      expense.expenseDate,
+      expense.category,
+      expense.description,
+      expense.amount,
+      expense.createdAt,
     ]
   )
 }

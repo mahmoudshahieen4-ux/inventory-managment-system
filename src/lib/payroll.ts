@@ -32,6 +32,22 @@ export function monthPrefix(year: number, month: number): string {
   return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-`
 }
 
+/** Returns the `YYYY-MM` key used to identify a calendar month period. */
+export function monthYearKey(year: number, month: number): string {
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}`
+}
+
+/**
+ * True when the `YYYY-MM-DD` key represents a date strictly after today.
+ * Used to reject attendance/advance entries planned for future days.
+ */
+export function isFutureDate(dateKey: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return true
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  return new Date(`${dateKey}T00:00:00`) > today
+}
+
 /** Localized month label (e.g. "March") for a given year/month. */
 export function monthName(year: number, month: number, locale = 'en'): string {
   return new Intl.DateTimeFormat(locale, { month: 'long' }).format(

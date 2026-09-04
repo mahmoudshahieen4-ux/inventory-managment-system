@@ -16,6 +16,7 @@ describe('PayrollStore', () => {
       workers: [...initialWorkers],
       attendance: [],
       advances: [],
+      salaryPayments: [],
     })
   })
 
@@ -89,14 +90,14 @@ describe('PayrollStore', () => {
   it('records a cash advance', () => {
     usePayrollStore
       .getState()
-      .addAdvance('worker-001', { amount: 120, date: '2026-09-05' })
+      .addAdvance('worker-001', { amount: 120, date: '2026-09-03' })
 
     const { advances } = usePayrollStore.getState()
     expect(advances).toHaveLength(1)
     expect(advances[0]).toMatchObject({
       workerId: 'worker-001',
       amount: 120,
-      date: '2026-09-05',
+      date: '2026-09-03',
     })
   })
 
@@ -109,7 +110,7 @@ describe('PayrollStore', () => {
     recordAttendance(workerId, '2026-09-03', 'HALF_DAY', 10)
     usePayrollStore
       .getState()
-      .addAdvance(workerId, { amount: 100, date: '2026-09-10' })
+      .addAdvance(workerId, { amount: 100, date: '2026-09-03' })
 
     const summary = usePayrollStore
       .getState()
@@ -142,6 +143,72 @@ describe('PayrollStore', () => {
     expect(workers.find(item => item.id === worker.id)).toBeUndefined()
     expect(attendance.some(record => record.workerId === worker.id)).toBe(false)
     expect(advances.some(record => record.workerId === worker.id)).toBe(false)
+  })
+
+  it('rejects attendance recorded for a future date', () => {
+    recordAttendance('worker-001', '2099-01-01', 'PRESENT', 0)
+    expect(usePayrollStore.getState().attendance).toHaveLength(0)
+  })
+
+  it('rejects advances granted for a future date', () => {
+    usePayrollStore
+      .getState()
+      .addAdvance('worker-001', { amount: 50, date: '2099-01-01' })
+    expect(usePayrollStore.getState().advances).toHaveLength(0)
+  })
+
+  it('isSalaryPaid is false for unpaid months', () => {
+    const worker = seedWorker()
+    expect(usePayrollStore.getState().isSalaryPaid(worker.id, 2026, 8)).toBe(
+      false
+    )
+  })
+
+  it('paySalary finalizes the month, freezes its records and is idempotent', () => {
+    const worker = seedWorker()
+    recordAttendance(worker.id, '2026-09-01', 'PRESENT', 10)
+    usePayrollStore
+      .getState()
+      .addAdvance(worker.id, { amount: 100, date: '2026-09-02' })
+
+    const summary = usePayrollStore
+      .getState()
+      .getMonthlySummary(worker.id, 2026, 9)
+
+    const payment = usePayrollStore
+      .getState()
+      .paySalary(worker.id, 2026, 9, 'ADMIN')
+
+    // The payout snapshot matches the audited monthly summary.
+    expect(payment).toMatchObject({
+      workerId: worker.id,
+      monthYear: '2026-09',
+      baseAmount: summary.totalEarnings,
+      totalDeductions: summary.totalDeductions,
+      totalAdvances: summary.totalAdvances,
+      netAmount: summary.netPayable,
+      paidBy: 'ADMIN',
+    })
+    expect(usePayrollStore.getState().isSalaryPaid(worker.id, 2026, 9)).toBe(
+      true
+    )
+    expect(usePayrollStore.getState().salaryPayments).toHaveLength(1)
+
+    // The paid month is frozen: new attendance/advances are rejected.
+    const attendanceCount = usePayrollStore.getState().attendance.length
+    recordAttendance(worker.id, '2026-09-03', 'PRESENT', 0)
+    expect(usePayrollStore.getState().attendance.length).toBe(attendanceCount)
+    expect(
+      usePayrollStore
+        .getState()
+        .addAdvance(worker.id, { amount: 10, date: '2026-09-03' })
+    ).toBeNull()
+
+    // Idempotency: a second payout for the same month is rejected.
+    expect(
+      usePayrollStore.getState().paySalary(worker.id, 2026, 9, 'ADMIN')
+    ).toBeNull()
+    expect(usePayrollStore.getState().salaryPayments).toHaveLength(1)
   })
 })
 
