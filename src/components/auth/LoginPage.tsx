@@ -7,7 +7,6 @@ import {
   LockKeyhole,
   LogIn,
   TriangleAlert,
-  UserRound,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -21,7 +20,11 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
+import {
+  InputGroup,
+  InputGroupButton,
+  InputGroupInput,
+} from '@/components/ui/input-group'
 import { Label } from '@/components/ui/label'
 import {
   Select,
@@ -33,38 +36,29 @@ import {
 import { useAuthStore } from '@/store/useAuthStore'
 import type { UserRole } from '@/types/auth'
 
-/** Default username pre-filled when the account type changes. */
-const DEFAULT_USERNAME: Record<UserRole, string> = {
+/** Default username mapping used internally for authentication. */
+const ROLE_USERNAME: Record<UserRole, string> = {
   ADMIN: 'admin',
   CASHIER: 'cashier',
 }
 
-/**
- * Full-screen sign-in gate shown until a user authenticates. Selecting the
- * account type pre-fills its username so cashiers only need their password.
- */
 export function LoginPage() {
   const { t } = useTranslation()
   const status = useAuthStore(state => state.status)
   const error = useAuthStore(state => state.error)
 
   const [role, setRole] = useState<UserRole>('ADMIN')
-  const [username, setUsername] = useState(DEFAULT_USERNAME.ADMIN)
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
 
   const isSubmitting = status === 'AUTHENTICATING'
   const errorMessage = error ? t(`auth.errors.${error.code}`) : null
 
-  const handleRoleChange = (value: string) => {
-    const nextRole = value as UserRole
-    setRole(nextRole)
-    setUsername(DEFAULT_USERNAME[nextRole])
-  }
-
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (isSubmitting) return
+    // تمرير اسم المستخدم تلقائياً بناءً على الدور المختار
+    const username = ROLE_USERNAME[role]
     void useAuthStore.getState().login(username, password)
   }
 
@@ -81,11 +75,12 @@ export function LoginPage() {
 
         <form onSubmit={handleSubmit} noValidate>
           <CardContent className="space-y-4">
+            {/* نوع الحساب */}
             <div className="space-y-2">
               <Label htmlFor="login-role">{t('auth.login.role')}</Label>
               <Select
                 value={role}
-                onValueChange={handleRoleChange}
+                onValueChange={value => setRole(value as UserRole)}
                 disabled={isSubmitting}
               >
                 <SelectTrigger id="login-role" className="w-full">
@@ -100,43 +95,24 @@ export function LoginPage() {
               </Select>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="login-username">{t('auth.login.username')}</Label>
-              <div className="relative">
-                <UserRound
-                  className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                  aria-hidden="true"
-                />
-                <Input
-                  id="login-username"
-                  value={username}
-                  onChange={event => setUsername(event.target.value)}
-                  autoComplete="username"
-                  dir="ltr"
-                  className="ps-9"
-                  disabled={isSubmitting}
-                />
-              </div>
-            </div>
-
-            <div className="space-y-2">
+            {/* كلمة السر فقط */}
+            <div className="space-y-2 pb-2">
               <Label htmlFor="login-password">{t('auth.login.password')}</Label>
-              <div className="relative">
-                <Input
+              <InputGroup>
+                <InputGroupInput
                   id="login-password"
                   type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={event => setPassword(event.target.value)}
                   autoComplete="current-password"
                   dir="ltr"
-                  className="pe-10"
                   disabled={isSubmitting}
                 />
-                <Button
+                <InputGroupButton
                   type="button"
                   variant="ghost"
-                  size="icon"
-                  className="absolute end-1 top-1/2 size-7 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  size="icon-sm"
+                  className="me-1 text-muted-foreground hover:text-foreground"
                   onClick={() => setShowPassword(previous => !previous)}
                   aria-label={
                     showPassword
@@ -151,8 +127,8 @@ export function LoginPage() {
                   ) : (
                     <Eye className="size-4" aria-hidden="true" />
                   )}
-                </Button>
-              </div>
+                </InputGroupButton>
+              </InputGroup>
             </div>
 
             {errorMessage && (

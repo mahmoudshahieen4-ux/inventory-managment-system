@@ -1,4 +1,3 @@
-
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -45,37 +44,37 @@
 :root {
   /* Light Theme - High Contrast Retail UI */
   --font-sans: 'Rubik Variable', 'Inter Variable', 'Segoe UI', sans-serif;
-  
+
   /* Backgrounds & Contrast */
-  --background: #f1f5f9;         /* رمادي هادئ ومريح للعين يعزل العناصر تماماً */
-  --foreground: #0f172a;         /* نصوص داكنة بوضوح ممتاز */
-  --card: #ffffff;               /* أبيض ناصع يبرز كروت المنتجات */
+  --background: #f1f5f9; /* رمادي هادئ ومريح للعين يعزل العناصر تماماً */
+  --foreground: #0f172a; /* نصوص داكنة بوضوح ممتاز */
+  --card: #ffffff; /* أبيض ناصع يبرز كروت المنتجات */
   --card-foreground: #0f172a;
   --popover: #ffffff;
   --popover-foreground: #0f172a;
 
   /* Action & Primary Colors */
-  --primary: #2563eb;            /* أزرق أساسي قوي للبيع والإضافة */
+  --primary: #2563eb; /* أزرق أساسي قوي للبيع والإضافة */
   --primary-foreground: #ffffff;
-  --secondary: #e2e8f0;          /* أزرار ثانوية واضحة */
+  --secondary: #e2e8f0; /* أزرار ثانوية واضحة */
   --secondary-foreground: #0f172a;
 
   /* Surfaces & Hover States */
-  --muted: #e2e8f0;              /* خلفيات مدخلات البيانات وحقول البحث */
-  --muted-foreground: #475569;   /* نصوص فرعية واضحة بتباين متوافق */
-  --accent: #dbeafe;             /* تحديد أزرق واضح عند الحوامة (Hover) */
+  --muted: #e2e8f0; /* خلفيات مدخلات البيانات وحقول البحث */
+  --muted-foreground: #475569; /* نصوص فرعية واضحة بتباين متوافق */
+  --accent: #dbeafe; /* تحديد أزرق واضح عند الحوامة (Hover) */
   --accent-foreground: #1e40af;
 
   /* Borders & Inputs */
-  --border: #cbd5e1;             /* حدود ممتازة تفصل كروت المنتجات عن الصفحة */
+  --border: #cbd5e1; /* حدود ممتازة تفصل كروت المنتجات عن الصفحة */
   --input: #cbd5e1;
   --ring: #2563eb;
 
   /* Status Tokens (Inventory & POS States) */
-  --destructive: #dc2626;        /* نفاد المخزون / إرجاع */
+  --destructive: #dc2626; /* نفاد المخزون / إرجاع */
   --destructive-foreground: #ffffff;
-  --success: #15803d;            /* مخزون متوفر / مكتمل */
-  --warning: #b45309;            /* مخزون منخفض */
+  --success: #15803d; /* مخزون متوفر / مكتمل */
+  --warning: #b45309; /* مخزون منخفض */
 
   /* Charts & Radius */
   --chart-1: oklch(0.809 0.105 251.813);
@@ -135,5 +134,5 @@
   --sidebar-accent: #334155;
   --sidebar-accent-foreground: #f8fafc;
   --sidebar-border: rgb(51 65 85 / 0.6);
-  --sidebar-ring: #60a5fa; 
+  --sidebar-ring: #60a5fa;
 }

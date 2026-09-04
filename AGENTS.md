@@ -142,12 +142,12 @@ Task-focused agents that leverage separate context for focused work:
 - `cleanup-analyzer` - Analyze static analysis output (used by `/cleanup`)
 - `userguide-reviewer` - Review user guide against actual system features
 
-
 I am building a POS and Inventory Desktop Application using Tauri v2, React, TypeScript, Tailwind CSS, and Shadcn UI.
 
 Act as a Senior Full-Stack Engineer and help me build this feature step-by-step.
 
 ### Requirements:
+
 1. **Local Database Setup:** Set up SQLite (or local JSON state / Zustand store for local persistence) to manage products and sales.
 2. **Inventory Management Table:**
    - Create a product table displaying: Code, Name, Quantity, Min Threshold, Purchase Price, Selling Price, and Actions (Edit/Delete).

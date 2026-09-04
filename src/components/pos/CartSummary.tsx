@@ -79,8 +79,7 @@ export function CartSummary({ onCheckoutComplete }: CartSummaryProps) {
       totalProfit: roundMoney(
         saleItems.reduce((sum, item) => sum + (item.profit ?? 0), 0)
       ),
-      cashierId:
-        useAuthStore.getState().currentUser?.username ?? 'guest',
+      cashierId: useAuthStore.getState().currentUser?.username ?? 'guest',
     })
 
     // 3. Reset the cart for the next sale and hand the receipt to the parent.
