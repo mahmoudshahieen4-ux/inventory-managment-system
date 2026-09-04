@@ -31,8 +31,8 @@ interface UIState {
 export const useUIStore = create<UIState>()(
   devtools(
     set => ({
-      leftSidebarVisible: true,
-      rightSidebarVisible: true,
+      leftSidebarVisible: false,
+      rightSidebarVisible: false,
       commandPaletteOpen: false,
       preferencesOpen: false,
       lastQuickPaneEntry: null,
@@ -98,11 +98,7 @@ export const useUIStore = create<UIState>()(
         set({ activeView: view }, undefined, 'setActiveView'),
 
       setDbInitializing: initializing =>
-        set(
-          { isDbInitializing: initializing },
-          undefined,
-          'setDbInitializing'
-        ),
+        set({ isDbInitializing: initializing }, undefined, 'setDbInitializing'),
     }),
     {
       name: 'ui-store',
