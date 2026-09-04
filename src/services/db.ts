@@ -7,6 +7,7 @@
 import Database from '@tauri-apps/plugin-sql'
 
 import type { Product } from '@/types/inventory'
+import type { AdvanceRecord, AttendanceRecord, Worker } from '@/types/payroll'
 import type { CreditNote, Sale, SaleItem } from '@/types/sales'
 
 /** True only inside the Tauri desktop webview. */
@@ -85,6 +86,39 @@ function getDb(): Promise<Database> {
         unit_price REAL NOT NULL,
         total_price REAL NOT NULL
       )`)
+      // Workers Payroll & Attendance tables (see src/types/payroll.ts).
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS workers (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          phone TEXT NOT NULL DEFAULT '',
+          daily_rate REAL NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'ACTIVE',
+          created_at TEXT NOT NULL
+        )
+      `)
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS worker_attendance (
+          id TEXT PRIMARY KEY,
+          worker_id TEXT NOT NULL REFERENCES workers(id) ON DELETE CASCADE,
+          date TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'ABSENT',
+          deduction_amount REAL NOT NULL DEFAULT 0,
+          notes TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL,
+          UNIQUE (worker_id, date)
+        )
+      `)
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS worker_advances (
+          id TEXT PRIMARY KEY,
+          worker_id TEXT NOT NULL REFERENCES workers(id) ON DELETE CASCADE,
+          amount REAL NOT NULL DEFAULT 0,
+          date TEXT NOT NULL,
+          notes TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL
+        )
+      `)
       await db.execute(
         'CREATE INDEX IF NOT EXISTS idx_sale_items_sale_id ON sale_items(sale_id)'
       )
@@ -500,6 +534,165 @@ export async function persistLicense(record: LicenseRecord): Promise<void> {
       record.firstRunDate,
       record.trialExpirationDate,
       record.lastActiveTime,
+    ]
+  )
+}
+/* ------------------------------------------------------------------ */
+/* Workers Payroll & Attendance persistence                             */
+/* ------------------------------------------------------------------ */
+
+interface WorkerRow {
+  id: string
+  name: string
+  phone: string
+  daily_rate: number
+  status: string
+  created_at: string
+}
+
+interface AttendanceRow {
+  id: string
+  worker_id: string
+  date: string
+  status: string
+  deduction_amount: number
+  notes: string
+  created_at: string
+}
+
+interface AdvanceRow {
+  id: string
+  worker_id: string
+  amount: number
+  date: string
+  notes: string
+  created_at: string
+}
+
+function toWorker(row: WorkerRow): Worker {
+  return {
+    id: row.id,
+    name: row.name,
+    phone: row.phone,
+    dailyRate: row.daily_rate,
+    status: row.status === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE',
+    createdAt: row.created_at,
+  }
+}
+
+function toAttendance(row: AttendanceRow): AttendanceRecord {
+  return {
+    id: row.id,
+    workerId: row.worker_id,
+    date: row.date,
+    status:
+      row.status === 'PRESENT' || row.status === 'HALF_DAY'
+        ? row.status
+        : 'ABSENT',
+    deductionAmount: row.deduction_amount,
+    notes: row.notes,
+    createdAt: row.created_at,
+  }
+}
+
+function toAdvance(row: AdvanceRow): AdvanceRecord {
+  return {
+    id: row.id,
+    workerId: row.worker_id,
+    amount: row.amount,
+    date: row.date,
+    notes: row.notes,
+    createdAt: row.created_at,
+  }
+}
+
+/** Loads every payroll record (workers, attendance and advances). */
+export async function fetchWorkersData(): Promise<{
+  workers: Worker[]
+  attendance: AttendanceRecord[]
+  advances: AdvanceRecord[]
+}> {
+  const db = await getDb()
+  const [workerRows, attendanceRows, advanceRows] = await Promise.all([
+    db.select<WorkerRow[]>(
+      'SELECT id, name, phone, daily_rate, status, created_at FROM workers ORDER BY name'
+    ),
+    db.select<AttendanceRow[]>(
+      'SELECT id, worker_id, date, status, deduction_amount, notes, created_at FROM worker_attendance ORDER BY date'
+    ),
+    db.select<AdvanceRow[]>(
+      'SELECT id, worker_id, amount, date, notes, created_at FROM worker_advances ORDER BY date'
+    ),
+  ])
+  return {
+    workers: workerRows.map(toWorker),
+    attendance: attendanceRows.map(toAttendance),
+    advances: advanceRows.map(toAdvance),
+  }
+}
+
+/** Inserts a worker, or replaces it when the id already exists (add/edit). */
+export async function persistWorker(worker: Worker): Promise<void> {
+  const db = await getDb()
+  await db.execute(
+    'INSERT OR REPLACE INTO workers (id, name, phone, daily_rate, status, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
+    [
+      worker.id,
+      worker.name,
+      worker.phone,
+      worker.dailyRate,
+      worker.status,
+      worker.createdAt,
+    ]
+  )
+}
+
+/** Removes a worker and cascades to their attendance/advance records. */
+export async function deleteWorkerRow(id: string): Promise<void> {
+  const db = await getDb()
+  await db.execute('DELETE FROM workers WHERE id = $1', [id])
+}
+
+/**
+ * Upserts one daily attendance record. The `UNIQUE (worker_id, date)`
+ * constraint guarantees one row per worker/day, so re-saving a day simply
+ * updates the existing row (status, deduction and notes).
+ */
+export async function persistAttendance(
+  record: AttendanceRecord
+): Promise<void> {
+  const db = await getDb()
+  await db.execute(
+    `INSERT INTO worker_attendance (id, worker_id, date, status, deduction_amount, notes, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (worker_id, date) DO UPDATE SET
+       status = excluded.status,
+       deduction_amount = excluded.deduction_amount,
+       notes = excluded.notes`,
+    [
+      record.id,
+      record.workerId,
+      record.date,
+      record.status,
+      record.deductionAmount,
+      record.notes,
+      record.createdAt,
+    ]
+  )
+}
+
+/** Inserts a new cash advance record for a worker. */
+export async function persistAdvance(record: AdvanceRecord): Promise<void> {
+  const db = await getDb()
+  await db.execute(
+    'INSERT INTO worker_advances (id, worker_id, amount, date, notes, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
+    [
+      record.id,
+      record.workerId,
+      record.amount,
+      record.date,
+      record.notes,
+      record.createdAt,
     ]
   )
 }

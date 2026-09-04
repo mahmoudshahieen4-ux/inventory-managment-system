@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 
 import { cleanupOldSalesData, isTauriRuntime } from './db'
 import { useInventoryStore } from '@/store/useInventoryStore'
+import { usePayrollStore } from '@/store/usePayrollStore'
 import { useSalesStore } from '@/store/useSalesStore'
 import { useUIStore } from '@/store/ui-store'
 
@@ -23,6 +24,7 @@ export function useAppBootstrap(): void {
       cleanupOldSalesData(),
       useInventoryStore.getState().hydrate(),
       useSalesStore.getState().hydrate(),
+      usePayrollStore.getState().hydrate(),
     ])
       .then(() => {
         if (!cancelled) setDbInitializing(false)

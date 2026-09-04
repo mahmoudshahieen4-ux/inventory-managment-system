@@ -2,11 +2,16 @@ import { describe, expect, it } from 'vitest'
 
 import {
   deleteProductRow,
+  deleteWorkerRow,
   fetchProducts,
   fetchSales,
+  fetchWorkersData,
   insertProduct,
   isTauriRuntime,
+  persistAdvance,
+  persistAttendance,
   persistSale,
+  persistWorker,
   updateProductRow,
 } from './db'
 
@@ -35,5 +40,12 @@ describe('db service', () => {
     await expect(updateProductRow(product)).rejects.toThrow()
     await expect(deleteProductRow('x')).rejects.toThrow()
     await expect(persistSale({ id: 'x' } as never)).rejects.toThrow()
+
+    // Workers Payroll & Attendance functions fail the same way outside Tauri.
+    await expect(fetchWorkersData()).rejects.toThrow()
+    await expect(persistWorker({ id: 'x' } as never)).rejects.toThrow()
+    await expect(persistAttendance({ id: 'x' } as never)).rejects.toThrow()
+    await expect(persistAdvance({ id: 'x' } as never)).rejects.toThrow()
+    await expect(deleteWorkerRow('x')).rejects.toThrow()
   })
 })

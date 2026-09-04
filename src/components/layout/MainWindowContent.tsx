@@ -8,6 +8,7 @@ import {
   useLicenseGuard,
 } from '@/components/auth'
 import { InventoryView } from '@/components/inventory'
+import { PayrollView } from '@/components/payroll'
 import { POSScreen } from '@/components/pos'
 import { useAppBootstrap } from '@/services/bootstrap'
 import { useLicenseStore } from '@/store/useLicenseStore'
@@ -61,7 +62,13 @@ export function MainWindowContent({
               <div className="flex h-full flex-col">
                 {isTrial && <TrialBanner />}
                 <div className="min-h-0 flex-1">
-                  {activeView === 'pos' ? <POSScreen /> : <InventoryView />}
+                  {activeView === 'pos' ? (
+                    <POSScreen />
+                  ) : activeView === 'payroll' ? (
+                    <PayrollView />
+                  ) : (
+                    <InventoryView />
+                  )}
                 </div>
               </div>
             )}
