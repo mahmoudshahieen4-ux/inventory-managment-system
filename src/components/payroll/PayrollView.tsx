@@ -29,7 +29,7 @@ type PayrollTab = 'workers' | 'attendance' | 'summary'
  */
 export function PayrollView() {
   const { t } = useTranslation()
-  const role = useAuthStore(state => state.role)
+  const role = useAuthStore(state => state.currentUser?.role)
   const isAdmin = role === 'ADMIN'
   const setActiveView = useUIStore(state => state.setActiveView)
   const [tab, setTab] = useState<PayrollTab>('workers')

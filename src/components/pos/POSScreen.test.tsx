@@ -20,7 +20,14 @@ describe('POSScreen', () => {
     useInventoryStore.setState({ products: initialProducts })
     useCartStore.setState({ items: [] })
     useSalesStore.setState({ sales: [] })
-    useAuthStore.setState({ role: 'CASHIER' })
+    useAuthStore.setState({
+      currentUser: {
+        id: 'user-cashier',
+        username: 'cashier',
+        displayName: 'Cashier',
+        role: 'CASHIER',
+      },
+    })
   })
 
   it('renders the product catalog with stock badges and prices', () => {
@@ -122,7 +129,7 @@ describe('POSScreen', () => {
       .products.find(product => product.id === 'prod-004')
     expect(chocolate?.quantity).toBe(48)
 
-    // Sale recorded with the current role as cashier
+    // Sale recorded with the signed-in cashier's username
     const sales = useSalesStore.getState().sales
     expect(sales).toHaveLength(1)
     expect(sales.at(0)?.items.at(0)).toMatchObject({
@@ -130,7 +137,7 @@ describe('POSScreen', () => {
       quantity: 2,
       lineTotal: 4.98,
     })
-    expect(sales.at(0)?.cashierId).toBe('CASHIER')
+    expect(sales.at(0)?.cashierId).toBe('cashier')
     expect(sales.at(0)?.total).toBe(5.23)
 
     // Cart reset for the next sale

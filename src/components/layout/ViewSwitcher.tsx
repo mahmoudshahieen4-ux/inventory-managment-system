@@ -9,7 +9,8 @@ import { useUIStore } from '@/store/ui-store'
 export function ViewSwitcher() {
   const { t } = useTranslation()
   const activeView = useUIStore(state => state.activeView)
-  const role = useAuthStore(state => state.role)
+  const currentUser = useAuthStore(state => state.currentUser)
+  const role = currentUser?.role
   const isAdmin = role === 'ADMIN'
 
   return (
@@ -23,10 +24,12 @@ export function ViewSwitcher() {
         }
       >
         <TabsList>
-          <TabsTrigger value="inventory" className="px-4">
-            <Boxes className="size-4" />
-            {t('nav.inventory')}
-          </TabsTrigger>
+          {isAdmin && (
+            <TabsTrigger value="inventory" className="px-4">
+              <Boxes className="size-4" />
+              {t('nav.inventory')}
+            </TabsTrigger>
+          )}
           <TabsTrigger value="pos" className="px-4">
             <ShoppingCart className="size-4" />
             {t('nav.pos')}

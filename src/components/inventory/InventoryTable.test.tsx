@@ -9,7 +9,14 @@ import { InventoryTable } from './InventoryTable'
 describe('InventoryTable', () => {
   beforeEach(() => {
     useInventoryStore.setState({ products: [...initialProducts] })
-    useAuthStore.setState({ role: 'ADMIN' })
+    useAuthStore.setState({
+      currentUser: {
+        id: 'user-admin',
+        username: 'admin',
+        displayName: 'Admin',
+        role: 'ADMIN',
+      },
+    })
   })
 
   it('renders every seeded product', () => {
@@ -158,7 +165,14 @@ describe('InventoryTable', () => {
   })
 
   it('hides all admin actions for CASHIER role', () => {
-    useAuthStore.setState({ role: 'CASHIER' })
+    useAuthStore.setState({
+      currentUser: {
+        id: 'user-cashier',
+        username: 'cashier',
+        displayName: 'Cashier',
+        role: 'CASHIER',
+      },
+    })
     render(<InventoryTable />)
 
     expect(

@@ -99,7 +99,11 @@ export function POSScreen() {
           if (!returnSale) return
           const note = useSalesStore
             .getState()
-            .createCreditNote(returnSale, items, useAuthStore.getState().role)
+            .createCreditNote(
+              returnSale,
+              items,
+              useAuthStore.getState().currentUser?.displayName ?? 'cashier'
+            )
           setCreditNote(note)
           setCreditNoteOpen(true)
         }}

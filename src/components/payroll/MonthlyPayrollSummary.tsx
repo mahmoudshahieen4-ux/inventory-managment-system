@@ -232,7 +232,7 @@ export function MonthlyPayrollSummary() {
         payingSummary.workerId,
         year,
         month,
-        useAuthStore.getState().role
+        useAuthStore.getState().currentUser?.displayName ?? 'ADMIN'
       )
     if (!payment) return
     toast.success(

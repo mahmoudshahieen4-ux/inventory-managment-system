@@ -161,11 +161,21 @@ This app uses React Compiler which automatically handles memoization. You do **n
 - Feature flags and configuration
 - Temporary workflow state
 
-**Auth/RBAC store** - `useAuthStore` (see `src/store/useAuthStore.ts`):
+**Auth store** - `useAuthStore` (see `src/store/useAuthStore.ts` and
+`docs/developer/authentication.md`):
 
-- Holds the current active user role (`'ADMIN' | 'CASHIER'`), defaulting to `ADMIN`
-- Exposes `setRole(role)` and `toggleRole()`; consumer UI (e.g., the titlebar role switch) can flip roles for testing RBAC
-- Components gate actions by selecting `useAuthStore(state => state.role)` and comparing against the role they require (e.g., `role === 'ADMIN'`)
+- Holds the signed-in `currentUser: User | null`, the full `accounts` list
+  (with password hashes, store-layer only) and a public `users` view
+- Authenticates with `login(username, password)` against PBKDF2-SHA256 hashes
+  stored in the SQLite `auth_users` table (in-memory defaults in browser dev)
+- Restores the last session on startup via `hydrate()`; sessions persist in
+  localStorage (`pos.auth.session.v1`)
+- Exposes `logout()`, `clearError()`, `changeOwnPassword()` and the ADMIN-only
+  `changeUserPassword()`
+- View access is decided by the pure `canAccessView(role, view)` helper in
+  `src/lib/permissions.ts`; components gate actions by selecting
+  `useAuthStore(state => state.currentUser?.role)` and comparing against the
+  role they require (e.g., `role === 'ADMIN'`)
 
 **Inventory store** - `useInventoryStore` (see `src/store/useInventoryStore.ts`):
 

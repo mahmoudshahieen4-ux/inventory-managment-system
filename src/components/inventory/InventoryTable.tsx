@@ -81,7 +81,7 @@ export function InventoryTable() {
   const { t } = useTranslation()
   const products = useInventoryStore(state => state.products)
   const deleteProduct = useInventoryStore(state => state.deleteProduct)
-  const role = useAuthStore(state => state.role)
+  const role = useAuthStore(state => state.currentUser?.role)
   const isAdmin = role === 'ADMIN'
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<StockFilter>('ALL')

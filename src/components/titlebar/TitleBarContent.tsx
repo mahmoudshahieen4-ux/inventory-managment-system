@@ -3,7 +3,15 @@ import { Button } from '@/components/ui/button'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useTheme } from '@/hooks/use-theme'
 import { executeCommand, useCommandContext } from '@/lib/commands'
-import { Settings, Shield, ShieldCheck, Moon, Sun, Store } from 'lucide-react'
+import {
+  LogOut,
+  Settings,
+  Shield,
+  ShieldCheck,
+  Moon,
+  Sun,
+  Store,
+} from 'lucide-react'
 
 /** Place this after window controls on macOS, or at the start on Windows/Linux. */
 export function TitleBarLeftActions() {
@@ -21,26 +29,27 @@ export function TitleBarLeftActions() {
  * Role switch control shown in the title bar.
  * Toggles between ADMIN and CASHIER for testing RBAC.
  */
-export function RoleToggle() {
+export function UserSessionBadge() {
   const { t } = useTranslation()
-  const role = useAuthStore(state => state.role)
-  const toggleRole = useAuthStore(state => state.toggleRole)
-  const isAdmin = role === 'ADMIN'
-  const roleLabel = isAdmin ? t('auth.role.admin') : t('auth.role.cashier')
-  const targetLabel = isAdmin ? t('auth.role.cashier') : t('auth.role.admin')
-  const RoleIcon = isAdmin ? ShieldCheck : Shield
+  const currentUser = useAuthStore(state => state.currentUser)
+  if (!currentUser) return null
+
+  const roleLabel =
+    currentUser.role === 'ADMIN' ? t('auth.role.admin') : t('auth.role.cashier')
+  const RoleIcon = currentUser.role === 'ADMIN' ? ShieldCheck : Shield
 
   return (
     <Button
-      onClick={toggleRole}
+      onClick={() => useAuthStore.getState().logout()}
       variant="ghost"
       size="sm"
       className="h-6 gap-1 text-foreground/70 hover:text-foreground"
-      aria-label={t('auth.toggleTo', { role: targetLabel })}
-      title={t('auth.toggleTo', { role: targetLabel })}
+      aria-label={t('auth.logout.action', { name: currentUser.displayName })}
+      title={t('auth.logout.action', { name: currentUser.displayName })}
     >
       <RoleIcon className="size-3.5" />
       <span>{roleLabel}</span>
+      <LogOut className="size-3" />
     </Button>
   )
 }
@@ -64,7 +73,7 @@ export function TitleBarRightActions() {
 
   return (
     <div className="flex items-center gap-1">
-      <RoleToggle />
+      <UserSessionBadge />
 
       <Button
         onClick={toggleTheme}

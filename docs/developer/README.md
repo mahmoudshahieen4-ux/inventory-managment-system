@@ -36,6 +36,7 @@ Technical documentation for building and extending this app. These docs describe
 | Document                                  | Description                                  |
 | ----------------------------------------- | -------------------------------------------- |
 | [Data Persistence](./data-persistence.md) | File storage patterns, atomic writes, SQLite |
+| [Authentication](./authentication.md)     | Login gate, sessions, roles, password hashes |
 | [External APIs](./external-apis.md)       | HTTP API calls, authentication, caching      |
 
 ## Quality & Tooling

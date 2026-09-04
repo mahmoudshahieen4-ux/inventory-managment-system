@@ -6,6 +6,7 @@
  */
 import Database from '@tauri-apps/plugin-sql'
 
+import type { AuthAccount } from '@/types/auth'
 import type { Product } from '@/types/inventory'
 import type {
   AdvanceRecord,
@@ -168,6 +169,19 @@ function getDb(): Promise<Database> {
         trial_expiration_date TEXT,
         last_active_time TEXT
       )`)
+      // Authentication accounts (see src/types/auth.ts). Passwords are stored
+      // as PBKDF2-SHA256 hashes produced by src/services/password-crypto.ts.
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS auth_users (
+          id TEXT PRIMARY KEY,
+          username TEXT NOT NULL UNIQUE,
+          display_name TEXT NOT NULL,
+          role TEXT NOT NULL CHECK (role IN ('ADMIN', 'CASHIER')),
+          password_hash TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+      `)
       // Lightweight migration for databases created before the unit column existed.
       await db
         .execute('ALTER TABLE products ADD COLUMN unit TEXT')
@@ -810,5 +824,69 @@ export async function persistOperatingExpense(
       expense.amount,
       expense.createdAt,
     ]
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Auth accounts persistence                                           */
+/* ------------------------------------------------------------------ */
+
+interface AuthUserRow {
+  id: string
+  username: string
+  display_name: string
+  role: string
+  password_hash: string
+  created_at: string
+  updated_at: string
+}
+
+function toAuthAccount(row: AuthUserRow): AuthAccount {
+  return {
+    id: row.id,
+    username: row.username,
+    displayName: row.display_name,
+    role: row.role === 'ADMIN' ? 'ADMIN' : 'CASHIER',
+    passwordHash: row.password_hash,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+/** Loads every auth account (hashes included — store layer only). */
+export async function fetchAuthUsers(): Promise<AuthAccount[]> {
+  const db = await getDb()
+  const rows = await db.select<AuthUserRow[]>(
+    'SELECT id, username, display_name, role, password_hash, created_at, updated_at FROM auth_users ORDER BY role, username'
+  )
+  return rows.map(toAuthAccount)
+}
+
+/** Inserts a new auth account. */
+export async function insertAuthUser(account: AuthAccount): Promise<void> {
+  const db = await getDb()
+  await db.execute(
+    'INSERT INTO auth_users (id, username, display_name, role, password_hash, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+    [
+      account.id,
+      account.username,
+      account.displayName,
+      account.role,
+      account.passwordHash,
+      account.createdAt,
+      account.updatedAt,
+    ]
+  )
+}
+
+/** Replaces the stored password hash for an account. */
+export async function updateAuthUserPassword(
+  id: string,
+  passwordHash: string
+): Promise<void> {
+  const db = await getDb()
+  await db.execute(
+    'UPDATE auth_users SET password_hash = $1, updated_at = $2 WHERE id = $3',
+    [passwordHash, new Date().toISOString(), id]
   )
 }
