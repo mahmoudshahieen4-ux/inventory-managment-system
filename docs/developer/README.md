@@ -37,6 +37,7 @@ Technical documentation for building and extending this app. These docs describe
 | ----------------------------------------- | -------------------------------------------- |
 | [Data Persistence](./data-persistence.md) | File storage patterns, atomic writes, SQLite |
 | [Authentication](./authentication.md)     | Login gate, sessions, roles, password hashes |
+| [Cloud Licensing](./cloud-licensing.md)   | Supabase subscriptions, offline-first sync   |
 | [External APIs](./external-apis.md)       | HTTP API calls, authentication, caching      |
 
 ## Quality & Tooling

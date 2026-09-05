@@ -7,6 +7,8 @@ import { initializeLanguage } from './i18n/language-init'
 import { logger } from './lib/logger'
 import { cleanupOldFiles } from './lib/recovery'
 import { commands } from './lib/tauri-bindings'
+import { isTauriRuntime } from './services/db'
+import { useLicenseStore } from './store/useLicenseStore'
 import './App.css'
 import { MainWindow } from './components/layout/MainWindow'
 import { ThemeProvider } from './components/ThemeProvider'
@@ -109,6 +111,23 @@ function App() {
     // Check for updates 5 seconds after app loads
     const updateTimer = setTimeout(checkForUpdates, 5000)
     return () => clearTimeout(updateTimer)
+  }, [])
+
+  // Hybrid cloud licensing (desktop only): re-validate the Supabase
+  // subscription on boot and whenever connectivity is restored. Boot
+  // initialization + the primary sync run inside `useLicenseGuard`; this
+  // effect keeps the license fresh after offline periods. Every failure is
+  // absorbed by the sync service — the local SQLite license state stays
+  // authoritative when offline (see docs/developer/cloud-licensing.md).
+  useEffect(() => {
+    if (!isTauriRuntime()) return
+
+    const resyncSubscription = () => {
+      void useLicenseStore.getState().syncWithCloud()
+    }
+    resyncSubscription()
+    window.addEventListener('online', resyncSubscription)
+    return () => window.removeEventListener('online', resyncSubscription)
   }, [])
 
   return (

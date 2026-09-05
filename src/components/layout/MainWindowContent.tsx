@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils'
 import { canAccessView } from '@/lib/permissions'
 import {
   AuthGate,
+  GracePeriodBanner,
   LicenseLockModal,
   TrialBanner,
   useLicenseGuard,
@@ -79,6 +80,7 @@ export function MainWindowContent({
             ) : (
               <div className="flex h-full flex-col">
                 {isTrial && <TrialBanner />}
+                <GracePeriodBanner />
                 <div className="min-h-0 flex-1">
                   {!canAccessActiveView || activeView === 'pos' ? (
                     <POSScreen />

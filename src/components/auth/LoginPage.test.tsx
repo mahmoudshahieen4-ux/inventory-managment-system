@@ -66,23 +66,28 @@ describe('LoginPage', () => {
     await seedAccounts()
   })
 
-  it('renders the account type, username and password fields', () => {
+  it('renders the account type and password fields', () => {
     render(<LoginPage />)
 
+    // The username is derived from the selected role — there is no
+    // username input on the form anymore.
     expect(screen.getByLabelText(/account type/i)).toBeInTheDocument()
-    expect(screen.getByLabelText(/username/i)).toHaveValue('admin')
+    expect(screen.queryByLabelText(/username/i)).not.toBeInTheDocument()
     expect(screen.getByLabelText(/^password$/i)).toHaveValue('')
   })
 
-  it('pre-fills the cashier username when the account type changes', async () => {
+  it('signs in as cashier when the account type changes', async () => {
     const user = userEvent.setup()
     render(<LoginPage />)
 
     await user.click(screen.getByLabelText(/account type/i))
     await user.click(await screen.findByRole('option', { name: /cashier/i }))
 
+    await user.type(screen.getByLabelText(/^password$/i), 'cashier123')
+    await user.click(screen.getByRole('button', { name: /sign in/i }))
+
     await waitFor(() => {
-      expect(screen.getByLabelText(/username/i)).toHaveValue('cashier')
+      expect(useAuthStore.getState().currentUser?.username).toBe('cashier')
     })
   })
 

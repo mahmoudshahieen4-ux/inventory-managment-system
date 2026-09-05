@@ -18,7 +18,9 @@ import {
   persistLicense,
 } from '@/services/db'
 import { getHardwareId } from '@/services/hardware-id'
+import { syncSubscriptionWithCloud } from '@/services/licenseSync'
 import { formatLicenseKey, validateLicenseKey } from '@/lib/license-key'
+import { logger } from '@/lib/logger'
 import type { LicenseRecord, LicenseStatus } from '@/types/license'
 
 const t = i18n.t.bind(i18n)
@@ -44,14 +46,28 @@ interface LicenseState {
   lastActiveTime: string | null
   /** True once startup initialization finished (the lock screen waits for it). */
   initialized: boolean
-  /** Loads the stored license on startup; applies the dev bypass outside Tauri. */
-  initialize: () => Promise<void>
+  /** Whole days left on the paid license (null when not applicable). */
+  daysRemaining: number | null
+  /** True while an ACTIVE license expires within 3 days (renewal warning). */
+  graceWarning: boolean
+  /** True when a system-clock rollback was detected (anti-tampering). */
+  clockRollbackDetected: boolean
+  /** True while startup initialization / cloud sync is running. */
+  loading: boolean
+  /**
+   * Loads the stored license on startup and, when a machine fingerprint is
+   * provided, reconciles it with the Supabase subscription (cloud sync).
+   * Applies the dev bypass outside Tauri.
+   */
+  initialize: (machineId?: string) => Promise<void>
   /** Validates a serial key; returns the error kind, or null when activated. */
   activate: (key: string) => Promise<LicenseRecord | null>
   /** Starts a fresh 3-day trial. */
   startTrial: () => Promise<void>
   /** Anti-rollback + expiry check; also pulses `lastActiveTime` on startup/hourly. */
   runExpirationCheck: () => Promise<ExpirationCheckResult>
+  /** Re-runs the cloud subscription sync (e.g. when connectivity returns). */
+  syncWithCloud: () => Promise<void>
 }
 
 /** Builds a new 3-day trial record anchored at the current time. */
@@ -84,6 +100,33 @@ function toRecord(state: LicenseState): LicenseRecord {
   }
 }
 
+/**
+ * Derives the countdown + renewal-warning UI fields from a license record.
+ * `graceWarning` covers the last `EXPIRING_SOON_DAYS` (3) days of an ACTIVE
+ * subscription; the trial has its own banner and never sets it.
+ */
+function deriveExpirationFields(
+  status: LicenseStatus,
+  expirationDate: string | null,
+  trialExpirationDate: string | null,
+  now: number
+): { daysRemaining: number | null; graceWarning: boolean } {
+  const anchor =
+    status === 'ACTIVE'
+      ? expirationDate
+      : status === 'TRIAL'
+        ? trialExpirationDate
+        : null
+  if (!anchor) return { daysRemaining: null, graceWarning: false }
+  const remainingMs = Date.parse(anchor) - now
+  if (remainingMs <= 0) return { daysRemaining: 0, graceWarning: false }
+  const daysRemaining = Math.ceil(remainingMs / DAY_MS)
+  return {
+    daysRemaining,
+    graceWarning: status === 'ACTIVE' && daysRemaining <= EXPIRING_SOON_DAYS,
+  }
+}
+
 export const useLicenseStore = create<LicenseState>()(
   devtools(
     (set, get) => ({
@@ -96,17 +139,29 @@ export const useLicenseStore = create<LicenseState>()(
       trialExpirationDate: null,
       lastActiveTime: null,
       initialized: false,
+      daysRemaining: null,
+      graceWarning: false,
+      clockRollbackDetected: false,
+      loading: false,
 
-      initialize: async () => {
+      initialize: async machineId => {
         if (!isTauriRuntime()) {
           // Dev bypass: never lock the browser dev server or unit tests.
           set(
-            { status: 'ACTIVE', initialized: true },
+            {
+              status: 'ACTIVE',
+              initialized: true,
+              loading: false,
+              daysRemaining: null,
+              graceWarning: false,
+              clockRollbackDetected: false,
+            },
             false,
             'license/initializeDevBypass'
           )
           return
         }
+        set({ loading: true }, false, 'license/initializeStart')
         try {
           await initializeDatabase()
           const row = await fetchLicenseRow()
@@ -120,7 +175,17 @@ export const useLicenseStore = create<LicenseState>()(
             // a 3-day trial so the app is usable immediately.
             const trialRecord = createTrialRecord()
             set(
-              { ...trialRecord, initialized: true },
+              {
+                ...trialRecord,
+                initialized: true,
+                clockRollbackDetected: false,
+                ...deriveExpirationFields(
+                  trialRecord.status,
+                  trialRecord.expirationDate,
+                  trialRecord.trialExpirationDate,
+                  Date.now()
+                ),
+              },
               false,
               'license/initializeAutoTrial'
             )
@@ -128,14 +193,59 @@ export const useLicenseStore = create<LicenseState>()(
             persistLicense(trialRecord).catch(() => {
               toast.error(`${t('db.toast.saveFailed')}`)
             })
-            return
+          } else if (row) {
+            set(
+              {
+                ...row,
+                initialized: true,
+                clockRollbackDetected: false,
+                ...deriveExpirationFields(
+                  row.status,
+                  row.expirationDate,
+                  row.trialExpirationDate,
+                  Date.now()
+                ),
+              },
+              false,
+              'license/initialize'
+            )
           }
-          if (!row) return
 
-          set({ ...row, initialized: true }, false, 'license/initialize')
+          // Hybrid cloud licensing: reconcile the local record with the
+          // Supabase subscription (also covers a machine whose vendor row was
+          // created before the first local launch — the cloud wins). The sync
+          // is offline-safe: every failure keeps the local state untouched.
+          if (machineId) {
+            const result = await syncSubscriptionWithCloud(machineId)
+            logger.debug('[license] cloud sync', { outcome: result.outcome })
+            if (result.outcome === 'SYNCED') {
+              const syncedRow = await fetchLicenseRow()
+              if (syncedRow) {
+                set(
+                  {
+                    ...syncedRow,
+                    clockRollbackDetected: false,
+                    ...deriveExpirationFields(
+                      syncedRow.status,
+                      syncedRow.expirationDate,
+                      syncedRow.trialExpirationDate,
+                      Date.now()
+                    ),
+                  },
+                  false,
+                  'license/cloudSyncApplied'
+                )
+              }
+            }
+          }
         } catch (error) {
           toast.error(`${t('db.toast.loadFailed')}: ${String(error)}`)
-          set({ initialized: true }, false, 'license/initializeFailed')
+        } finally {
+          set(
+            { initialized: true, loading: false },
+            false,
+            'license/initializeDone'
+          )
         }
       },
 
@@ -158,7 +268,20 @@ export const useLicenseStore = create<LicenseState>()(
           trialExpirationDate: null,
           lastActiveTime: null,
         }
-        set(record, false, 'license/activate')
+        set(
+          {
+            ...record,
+            clockRollbackDetected: false,
+            ...deriveExpirationFields(
+              record.status,
+              record.expirationDate,
+              record.trialExpirationDate,
+              Date.now()
+            ),
+          },
+          false,
+          'license/activate'
+        )
         toast.success(t('license.toast.activated'))
         if (isTauriRuntime()) {
           persistLicense(record).catch(error => {
@@ -170,7 +293,20 @@ export const useLicenseStore = create<LicenseState>()(
 
       startTrial: async () => {
         const record = createTrialRecord()
-        set(record, false, 'license/startTrial')
+        set(
+          {
+            ...record,
+            clockRollbackDetected: false,
+            ...deriveExpirationFields(
+              record.status,
+              record.expirationDate,
+              record.trialExpirationDate,
+              Date.now()
+            ),
+          },
+          false,
+          'license/startTrial'
+        )
         toast.success(t('license.toast.trialStarted'))
         if (isTauriRuntime()) {
           persistLicense(record).catch(error => {
@@ -186,7 +322,16 @@ export const useLicenseStore = create<LicenseState>()(
         // Anti-clock-tampering: if "now" moved backwards past the last seen
         // timestamp the system clock was rolled back — lock immediately.
         if (state.lastActiveTime && now < Date.parse(state.lastActiveTime)) {
-          set({ status: 'EXPIRED' }, false, 'license/clockRollback')
+          set(
+            {
+              status: 'EXPIRED',
+              clockRollbackDetected: true,
+              daysRemaining: null,
+              graceWarning: false,
+            },
+            false,
+            'license/clockRollback'
+          )
           toast.error(t('license.toast.clockRollback'))
           if (isTauriRuntime()) {
             persistLicense(toRecord(get())).catch(error => {
@@ -210,9 +355,26 @@ export const useLicenseStore = create<LicenseState>()(
 
         const { status, expirationDate, trialExpirationDate } = get()
 
+        // Refresh the derived countdown / renewal-warning fields so the UI
+        // (grace-period banner) stays in sync without extra computation.
+        set(
+          deriveExpirationFields(
+            status,
+            expirationDate,
+            trialExpirationDate,
+            now
+          ),
+          false,
+          'license/derived'
+        )
+
         if (status === 'TRIAL') {
           if (!trialExpirationDate || now >= Date.parse(trialExpirationDate)) {
-            set({ status: 'EXPIRED' }, false, 'license/trialExpired')
+            set(
+              { status: 'EXPIRED', daysRemaining: 0, graceWarning: false },
+              false,
+              'license/trialExpired'
+            )
             toast.error(t('license.toast.expired'))
             if (isTauriRuntime()) {
               persistLicense(toRecord(get())).catch(error => {
@@ -237,7 +399,11 @@ export const useLicenseStore = create<LicenseState>()(
         }
 
         if (now > Date.parse(expirationDate)) {
-          set({ status: 'EXPIRED' }, false, 'license/expire')
+          set(
+            { status: 'EXPIRED', daysRemaining: 0, graceWarning: false },
+            false,
+            'license/expire'
+          )
           toast.error(t('license.toast.expired'))
           if (isTauriRuntime()) {
             persistLicense(toRecord(get())).catch(error => {
@@ -256,6 +422,39 @@ export const useLicenseStore = create<LicenseState>()(
           return 'EXPIRING_SOON'
         }
         return 'OK'
+      },
+
+      /**
+       * Re-runs the cloud subscription sync and refreshes the local state.
+       * Safe to call any time: it no-ops outside the desktop runtime and
+       * before initialization has completed (the boot sync runs there).
+       * Used on app boot and whenever connectivity is restored.
+       */
+      syncWithCloud: async () => {
+        if (!isTauriRuntime() || !get().initialized) return
+        const { machineId } = await getHardwareId()
+        const result = await syncSubscriptionWithCloud(machineId)
+        logger.debug('[license] cloud resync', { outcome: result.outcome })
+        if (result.outcome === 'SYNCED') {
+          const row = await fetchLicenseRow()
+          if (row) {
+            set(
+              {
+                ...row,
+                clockRollbackDetected: false,
+                ...deriveExpirationFields(
+                  row.status,
+                  row.expirationDate,
+                  row.trialExpirationDate,
+                  Date.now()
+                ),
+              },
+              false,
+              'license/cloudResync'
+            )
+          }
+          await get().runExpirationCheck()
+        }
       },
     }),
     { name: 'license-store' }

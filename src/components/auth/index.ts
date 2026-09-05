@@ -1,4 +1,5 @@
 export { AuthGate } from './AuthGate'
+export { GracePeriodBanner } from './GracePeriodBanner'
 export { LicenseLockModal } from './LicenseLockModal'
 export { LoginPage } from './LoginPage'
 export { TrialBanner } from './TrialBanner'
