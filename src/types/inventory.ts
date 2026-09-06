@@ -13,6 +13,9 @@ export interface Product {
   id: string
   name: string
   sku: string
+  /** Machine-readable barcode (EAN-13, UPC-A, Code 128, ...). Optional — not
+   * every product ships with a pre-printed barcode. */
+  barcode?: string
   quantity: number
   minThreshold: number
   purchasePrice: number

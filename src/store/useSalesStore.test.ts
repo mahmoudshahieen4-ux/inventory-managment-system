@@ -24,13 +24,16 @@ describe('useSalesStore', () => {
   })
 
   it('records a sale with a generated id, invoice number and timestamp', () => {
-    const sale = useSalesStore.getState().addSale({
-      items,
-      subtotal: 4.98,
-      tax: 0.25,
-      total: 5.23,
-      cashierId: 'CASHIER',
-    })
+    const sale = useSalesStore.getState().addSaleAtomic(
+      {
+        items,
+        subtotal: 4.98,
+        tax: 0.25,
+        total: 5.23,
+        cashierId: 'CASHIER',
+      },
+      []
+    )
 
     expect(sale.id).toBeTruthy()
     expect(sale.invoiceNumber).toBe('INV-0001')
@@ -40,21 +43,27 @@ describe('useSalesStore', () => {
   })
 
   it('assigns sequential invoice numbers and prepends newer sales', () => {
-    const { addSale } = useSalesStore.getState()
-    const first = addSale({
-      items,
-      subtotal: 4.98,
-      tax: 0.25,
-      total: 5.23,
-      cashierId: 'ADMIN',
-    })
-    const second = addSale({
-      items,
-      subtotal: 4.98,
-      tax: 0.25,
-      total: 5.23,
-      cashierId: 'ADMIN',
-    })
+    const { addSaleAtomic } = useSalesStore.getState()
+    const first = addSaleAtomic(
+      {
+        items,
+        subtotal: 4.98,
+        tax: 0.25,
+        total: 5.23,
+        cashierId: 'ADMIN',
+      },
+      []
+    )
+    const second = addSaleAtomic(
+      {
+        items,
+        subtotal: 4.98,
+        tax: 0.25,
+        total: 5.23,
+        cashierId: 'ADMIN',
+      },
+      []
+    )
 
     expect(first.invoiceNumber).toBe('INV-0001')
     expect(second.invoiceNumber).toBe('INV-0002')
@@ -66,14 +75,17 @@ describe('useSalesStore', () => {
   })
 
   it('retrieves a stored invoice by id for re-printing', () => {
-    const { addSale } = useSalesStore.getState()
-    const sale = addSale({
-      items,
-      subtotal: 4.98,
-      tax: 0.25,
-      total: 5.23,
-      cashierId: 'ADMIN',
-    })
+    const { addSaleAtomic } = useSalesStore.getState()
+    const sale = addSaleAtomic(
+      {
+        items,
+        subtotal: 4.98,
+        tax: 0.25,
+        total: 5.23,
+        cashierId: 'ADMIN',
+      },
+      []
+    )
 
     expect(useSalesStore.getState().getSaleById(sale.id)).toEqual(sale)
   })

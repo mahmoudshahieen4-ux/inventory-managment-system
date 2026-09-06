@@ -12,10 +12,31 @@ import { cn } from '@/lib/utils'
 import { useCartStore } from '@/store/useCartStore'
 import { useInventoryStore } from '@/store/useInventoryStore'
 
+interface ProductCatalogProps {
+  /**
+   * Optional external control over the search box. The POS screen owns this
+   * state so it can clear the box after a barcode scan.
+   */
+  search?: string
+  onSearchChange?: (search: string) => void
+}
+
 /** Left POS pane: instant search plus a grid of sellable product cards. */
-export function ProductCatalog() {
+export function ProductCatalog({
+  search,
+  onSearchChange,
+}: ProductCatalogProps = {}) {
   const { t } = useTranslation()
-  const [search, setSearch] = useState('')
+  const [localSearch, setLocalSearch] = useState('')
+  const activeSearch = search ?? localSearch
+
+  const handleSearchChange = (value: string) => {
+    if (onSearchChange) {
+      onSearchChange(value)
+    } else {
+      setLocalSearch(value)
+    }
+  }
 
   const products = useInventoryStore(state => state.products)
   const cartItems = useCartStore(state => state.items)
@@ -24,13 +45,14 @@ export function ProductCatalog() {
     cartItems.map(item => [item.productId, item.quantity])
   )
 
-  const normalizedSearch = search.trim().toLowerCase()
+  const normalizedSearch = activeSearch.trim().toLowerCase()
   const sellableProducts = products.filter(product => product.quantity > 0)
   const filteredProducts = normalizedSearch
     ? sellableProducts.filter(
         product =>
           product.name.toLowerCase().includes(normalizedSearch) ||
-          product.sku.toLowerCase().includes(normalizedSearch)
+          product.sku.toLowerCase().includes(normalizedSearch) ||
+          (product.barcode ?? '').toLowerCase().includes(normalizedSearch)
       )
     : sellableProducts
 
@@ -39,8 +61,8 @@ export function ProductCatalog() {
       <div className="relative">
         <Search className="text-muted-foreground pointer-events-none absolute top-1/2 start-3 size-4 -translate-y-1/2" />
         <Input
-          value={search}
-          onChange={event => setSearch(event.target.value)}
+          value={activeSearch}
+          onChange={event => handleSearchChange(event.target.value)}
           placeholder={t('pos.searchPlaceholder')}
           aria-label={t('pos.searchLabel')}
           className="ps-9"

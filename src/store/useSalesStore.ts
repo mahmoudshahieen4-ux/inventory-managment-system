@@ -3,21 +3,31 @@ import { devtools } from 'zustand/middleware'
 import { toast } from 'sonner'
 
 import i18n from '@/i18n/config'
+import { roundMoney } from '@/lib/money'
 import {
   fetchCreditNotes,
   fetchSales,
   initializeDatabase,
   isTauriRuntime,
   persistCreditNote,
-  persistSale,
+  persistSaleAtomic,
 } from '@/services/db'
+import type { StockUpdate } from '@/services/db'
 import type { CreditNote, ReturnItem, Sale } from '@/types/sales'
 
 export interface SalesState {
   /** Completed sales, newest first. */
   sales: Sale[]
-  /** Creates a sale record with generated id, invoice number and timestamp, prepended to the list. */
-  addSale: (sale: Omit<Sale, 'id' | 'createdAt' | 'invoiceNumber'>) => Sale
+  /**
+   * Atomic checkout: records the sale and applies the inventory stock
+   * decrements inside one SQLite transaction. The in-memory sales list is
+   * updated immediately; stock deltas are applied by the caller via
+   * `useInventoryStore.applyStockDeltas` (already persisted atomically).
+   */
+  addSaleAtomic: (
+    sale: Omit<Sale, 'id' | 'createdAt' | 'invoiceNumber'>,
+    stockUpdates: StockUpdate[]
+  ) => Sale
   /** Retrieves a stored invoice by id, for re-printing from sales history. */
   getSaleById: (id: string) => Sale | undefined
   /** Loads stored invoices from SQLite into the store. */
@@ -37,7 +47,9 @@ export const useSalesStore = create<SalesState>()(
       sales: [],
       creditNotes: [],
 
-      addSale: sale => {
+      getSaleById: id => get().sales.find(sale => sale.id === id),
+
+      addSaleAtomic: (sale, stockUpdates) => {
         const record: Sale = {
           ...sale,
           id: crypto.randomUUID(),
@@ -47,18 +59,16 @@ export const useSalesStore = create<SalesState>()(
         set(
           state => ({ sales: [record, ...state.sales] }),
           undefined,
-          'sales/addSale'
+          'sales/addSaleAtomic'
         )
-        // Persist the invoice header + item lines; toast on failure.
+        // Invoice + item lines + stock decrement commit in ONE transaction.
         if (isTauriRuntime()) {
-          persistSale(record).catch(error => {
+          persistSaleAtomic(record, stockUpdates).catch(error => {
             toast.error(`${i18n.t('db.toast.saveFailed')}: ${String(error)}`)
           })
         }
         return record
       },
-
-      getSaleById: id => get().sales.find(sale => sale.id === id),
 
       returnedQuantity: (saleId, productId) =>
         get()
@@ -74,7 +84,9 @@ export const useSalesStore = create<SalesState>()(
           originalInvoiceNumber: sale.invoiceNumber,
           originalSaleId: sale.id,
           items,
-          total: items.reduce((sum, item) => sum + item.lineTotal, 0),
+          total: roundMoney(
+            items.reduce((sum, item) => sum + item.lineTotal, 0)
+          ),
           cashierId,
           createdAt: new Date().toISOString(),
         }

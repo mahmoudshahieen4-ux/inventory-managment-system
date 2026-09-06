@@ -28,10 +28,21 @@ const t = i18n.t.bind(i18n)
 /** Trial length in days. */
 export const TRIAL_DAYS = 3
 /** Warn when a paid license expires within this many days. */
-const EXPIRING_SOON_DAYS = 3
+export const EXPIRING_SOON_DAYS = 3
 /** Warn when the trial ends within this many days. */
 const TRIAL_EXPIRING_SOON_DAYS = 1
 const DAY_MS = 86_400_000
+
+/**
+ * Whole number of days between `now` and `expiresAt`, rounded up to the nearest
+ * integer (e.g. 2.1 days left → 3, exactly 2 days left → 2). Matches the
+ * monthly-subscription renewal calculation used by the expiring-soon banner.
+ */
+export function getDaysRemaining(expiresAt: string, now = Date.now()): number {
+  return Math.ceil(
+    (new Date(expiresAt).getTime() - now) / (1000 * 60 * 60 * 24)
+  )
+}
 
 export type ExpirationCheckResult = 'OK' | 'EXPIRING_SOON' | 'EXPIRED' | 'TRIAL'
 
@@ -48,7 +59,12 @@ interface LicenseState {
   initialized: boolean
   /** Whole days left on the paid license (null when not applicable). */
   daysRemaining: number | null
-  /** True while an ACTIVE license expires within 3 days (renewal warning). */
+  /**
+   * True while an ACTIVE subscription expires within `EXPIRING_SOON_DAYS`
+   * days. The app stays fully functional until the status flips to EXPIRED.
+   */
+  isExpiringSoon: boolean
+  /** Legacy alias of `isExpiringSoon` kept for existing consumers/tests. */
   graceWarning: boolean
   /** True when a system-clock rollback was detected (anti-tampering). */
   clockRollbackDetected: boolean
@@ -102,7 +118,7 @@ function toRecord(state: LicenseState): LicenseRecord {
 
 /**
  * Derives the countdown + renewal-warning UI fields from a license record.
- * `graceWarning` covers the last `EXPIRING_SOON_DAYS` (3) days of an ACTIVE
+ * `isExpiringSoon` covers the last `EXPIRING_SOON_DAYS` (3) days of an ACTIVE
  * subscription; the trial has its own banner and never sets it.
  */
 function deriveExpirationFields(
@@ -110,21 +126,28 @@ function deriveExpirationFields(
   expirationDate: string | null,
   trialExpirationDate: string | null,
   now: number
-): { daysRemaining: number | null; graceWarning: boolean } {
+): {
+  daysRemaining: number | null
+  isExpiringSoon: boolean
+  graceWarning: boolean
+} {
   const anchor =
     status === 'ACTIVE'
       ? expirationDate
       : status === 'TRIAL'
         ? trialExpirationDate
         : null
-  if (!anchor) return { daysRemaining: null, graceWarning: false }
-  const remainingMs = Date.parse(anchor) - now
-  if (remainingMs <= 0) return { daysRemaining: 0, graceWarning: false }
-  const daysRemaining = Math.ceil(remainingMs / DAY_MS)
-  return {
-    daysRemaining,
-    graceWarning: status === 'ACTIVE' && daysRemaining <= EXPIRING_SOON_DAYS,
+  if (!anchor) {
+    return { daysRemaining: null, isExpiringSoon: false, graceWarning: false }
   }
+  const remainingMs = Date.parse(anchor) - now
+  if (remainingMs <= 0) {
+    return { daysRemaining: 0, isExpiringSoon: false, graceWarning: false }
+  }
+  const daysRemaining = getDaysRemaining(anchor, now)
+  const isExpiringSoon =
+    status === 'ACTIVE' && daysRemaining <= EXPIRING_SOON_DAYS
+  return { daysRemaining, isExpiringSoon, graceWarning: isExpiringSoon }
 }
 
 export const useLicenseStore = create<LicenseState>()(
@@ -140,6 +163,7 @@ export const useLicenseStore = create<LicenseState>()(
       lastActiveTime: null,
       initialized: false,
       daysRemaining: null,
+      isExpiringSoon: false,
       graceWarning: false,
       clockRollbackDetected: false,
       loading: false,
@@ -153,6 +177,7 @@ export const useLicenseStore = create<LicenseState>()(
               initialized: true,
               loading: false,
               daysRemaining: null,
+              isExpiringSoon: false,
               graceWarning: false,
               clockRollbackDetected: false,
             },
@@ -327,6 +352,7 @@ export const useLicenseStore = create<LicenseState>()(
               status: 'EXPIRED',
               clockRollbackDetected: true,
               daysRemaining: null,
+              isExpiringSoon: false,
               graceWarning: false,
             },
             false,
@@ -371,7 +397,12 @@ export const useLicenseStore = create<LicenseState>()(
         if (status === 'TRIAL') {
           if (!trialExpirationDate || now >= Date.parse(trialExpirationDate)) {
             set(
-              { status: 'EXPIRED', daysRemaining: 0, graceWarning: false },
+              {
+                status: 'EXPIRED',
+                daysRemaining: 0,
+                isExpiringSoon: false,
+                graceWarning: false,
+              },
               false,
               'license/trialExpired'
             )
@@ -400,7 +431,12 @@ export const useLicenseStore = create<LicenseState>()(
 
         if (now > Date.parse(expirationDate)) {
           set(
-            { status: 'EXPIRED', daysRemaining: 0, graceWarning: false },
+            {
+              status: 'EXPIRED',
+              daysRemaining: 0,
+              isExpiringSoon: false,
+              graceWarning: false,
+            },
             false,
             'license/expire'
           )
@@ -412,10 +448,8 @@ export const useLicenseStore = create<LicenseState>()(
           }
           return 'EXPIRED'
         }
-        const remainingDays = Math.ceil(
-          (Date.parse(expirationDate) - now) / DAY_MS
-        )
-        if (remainingDays <= EXPIRING_SOON_DAYS) {
+        const remainingDays = getDaysRemaining(expirationDate, now)
+        if (remainingDays > 0 && remainingDays <= EXPIRING_SOON_DAYS) {
           toast.warning(
             t('license.toast.expiringSoon', { days: remainingDays })
           )

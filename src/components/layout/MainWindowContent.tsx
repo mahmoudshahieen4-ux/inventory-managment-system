@@ -4,13 +4,14 @@ import { useTranslation } from 'react-i18next'
 
 import { cn } from '@/lib/utils'
 import { canAccessView } from '@/lib/permissions'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import {
   AuthGate,
-  GracePeriodBanner,
   LicenseLockModal,
   TrialBanner,
   useLicenseGuard,
 } from '@/components/auth'
+import { SubscriptionBanner } from '@/components/license'
 import { InventoryView } from '@/components/inventory'
 import { PayrollView } from '@/components/payroll'
 import { POSScreen } from '@/components/pos'
@@ -80,14 +81,34 @@ export function MainWindowContent({
             ) : (
               <div className="flex h-full flex-col">
                 {isTrial && <TrialBanner />}
-                <GracePeriodBanner />
+                <SubscriptionBanner />
                 <div className="min-h-0 flex-1">
+                  {/* Per-view error boundaries: a crash in one section shows a
+                      compact recovery card without freezing the whole app. */}
                   {!canAccessActiveView || activeView === 'pos' ? (
-                    <POSScreen />
+                    <ErrorBoundary
+                      variant="section"
+                      resetKey={activeView}
+                      section="POS"
+                    >
+                      <POSScreen />
+                    </ErrorBoundary>
                   ) : activeView === 'payroll' ? (
-                    <PayrollView />
+                    <ErrorBoundary
+                      variant="section"
+                      resetKey={activeView}
+                      section="Payroll"
+                    >
+                      <PayrollView />
+                    </ErrorBoundary>
                   ) : (
-                    <InventoryView />
+                    <ErrorBoundary
+                      variant="section"
+                      resetKey={activeView}
+                      section="Inventory"
+                    >
+                      <InventoryView />
+                    </ErrorBoundary>
                   )}
                 </div>
               </div>

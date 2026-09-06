@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
 
+import { isValidEAN13 } from '@/lib/barcode'
 import { initialProducts, useInventoryStore } from '@/store/useInventoryStore'
 import { render, screen } from '@/test/test-utils'
 import type { Product } from '@/types/inventory'
@@ -165,5 +166,59 @@ describe('ProductFormModal', () => {
       .products.find(product => product.id === 'prod-002')
     expect(updated?.name).toBe('Whole Milk 2L')
     expect(updated?.quantity).toBe(5)
+  })
+
+  it('generates a readable PRD code into the SKU field with the Generate button', async () => {
+    const user = userEvent.setup()
+    renderCreateModal()
+
+    expect(screen.getByLabelText('SKU')).toHaveValue('')
+
+    await user.click(
+      screen.getByRole('button', { name: 'Generate Random Barcode' })
+    )
+
+    const sku = screen.getByLabelText('SKU') as HTMLInputElement
+    expect(sku.value).toMatch(/^PRD-[0-9A-F]{8}$/)
+    // The field stays editable for manual / scanner input.
+    await user.type(sku, '-manual')
+    expect(sku.value).toMatch(/^PRD-[0-9A-F]{8}-manual$/)
+  })
+
+  it('generates a valid EAN-13 barcode into the barcode field', async () => {
+    const user = userEvent.setup()
+    renderCreateModal()
+
+    await user.click(screen.getByRole('button', { name: 'Generate EAN-13' }))
+
+    const barcode = screen.getByLabelText(
+      'Barcode (optional)'
+    ) as HTMLInputElement
+    expect(barcode.value).toMatch(/^\d{13}$/)
+    expect(isValidEAN13(barcode.value)).toBe(true)
+  })
+
+  it('rejects a barcode that already belongs to another product', async () => {
+    const user = userEvent.setup()
+    renderCreateModal()
+
+    await user.type(screen.getByLabelText('Name'), 'Duplicate Barcode')
+    await user.type(screen.getByLabelText('Category'), 'Testing')
+    await user.type(screen.getByLabelText('Quantity'), '1')
+    await user.type(screen.getByLabelText('Min Threshold'), '1')
+    await user.type(screen.getByLabelText('Purchase Price'), '1')
+    await user.type(screen.getByLabelText('Selling Price'), '2')
+    // prod-001 (Espresso Beans) already owns this barcode.
+    await user.type(
+      screen.getByLabelText('Barcode (optional)'),
+      '6291041500213'
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Create Product' }))
+
+    expect(
+      screen.getByText('This barcode is already assigned to another product.')
+    ).toBeInTheDocument()
+    expect(onOpenChangeMock).not.toHaveBeenCalled()
   })
 })

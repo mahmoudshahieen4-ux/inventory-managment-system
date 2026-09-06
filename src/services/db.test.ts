@@ -7,6 +7,7 @@ import {
   fetchSalaryPayments,
   fetchSales,
   fetchWorkersData,
+  findProductByBarcode,
   insertProduct,
   isTauriRuntime,
   persistAdvance,
@@ -38,6 +39,7 @@ describe('db service', () => {
       category: 'Test',
     }
     await expect(fetchProducts()).rejects.toThrow()
+    await expect(findProductByBarcode('6291041500213')).rejects.toThrow()
     await expect(fetchSales()).rejects.toThrow()
     await expect(insertProduct(product)).rejects.toThrow()
     await expect(updateProductRow(product)).rejects.toThrow()

@@ -1,16 +1,15 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 
+import { roundMoney } from '@/lib/money'
 import type { Product } from '@/types/inventory'
 import type { CartItem } from '@/types/sales'
 
 /** Sales tax rate applied to every checkout. Set to 0.05 for 5%, or 0 to disable tax. */
 export const TAX_RATE = 0.05
 
-/** Round to two decimal places to avoid floating-point drift. */
-export function roundMoney(value: number): number {
-  return Math.round(value * 100) / 100
-}
+/** Canonical two-decimal rounding lives in `lib/money.ts`; re-exported for the cart selectors. */
+export { roundMoney }
 
 export interface CartState {
   items: CartItem[]
@@ -21,10 +20,48 @@ export interface CartState {
   clearCart: () => void
 }
 
+/** localStorage key holding the unsaved cart between launches. */
+const CART_STORAGE_KEY = 'pos.cart.v1'
+
+/**
+ * Restores the unsaved cart after a restart/update. Corrupt or malformed
+ * payloads are discarded (fail-open to an empty cart) instead of crashing.
+ */
+function readStoredCart(): CartItem[] {
+  try {
+    const raw = localStorage.getItem(CART_STORAGE_KEY)
+    if (!raw) return []
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter(
+      (item): item is CartItem =>
+        typeof item === 'object' &&
+        item !== null &&
+        typeof item.productId === 'string' &&
+        typeof item.name === 'string' &&
+        typeof item.unitPrice === 'number' &&
+        typeof item.quantity === 'number' &&
+        Number.isFinite(item.quantity) &&
+        item.quantity > 0
+    )
+  } catch {
+    return []
+  }
+}
+
+/** Best-effort write of the current cart; storage failures never break the POS. */
+function persistCart(items: CartItem[]): void {
+  try {
+    localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(items))
+  } catch {
+    // Storage unavailable (e.g. private mode) — the cart simply won't persist.
+  }
+}
+
 export const useCartStore = create<CartState>()(
   devtools(
     set => ({
-      items: [],
+      items: readStoredCart(),
 
       addToCart: product =>
         set(
@@ -108,6 +145,15 @@ export const useCartStore = create<CartState>()(
     { name: 'cart-store' }
   )
 )
+
+/**
+ * Offline-first cart recovery: every cart mutation is mirrored to localStorage
+ * (one subscription covers all actions), so a crash, forced update or restart
+ * never drops an unsaved sale. Cleared carts persist as an empty cart too.
+ */
+useCartStore.subscribe(state => {
+  persistCart(state.items)
+})
 
 /** Subtotal, equal to the sum of unit price x quantity. */
 export const selectCartSubtotal = (state: CartState): number =>

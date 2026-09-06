@@ -3,7 +3,12 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { getHardwareId } from '@/services/hardware-id'
 import { generateLicenseKey } from '@/lib/license-key'
 import type { LicenseRecord } from '@/types/license'
-import { TRIAL_DAYS, useLicenseStore } from './useLicenseStore'
+import {
+  EXPIRING_SOON_DAYS,
+  TRIAL_DAYS,
+  getDaysRemaining,
+  useLicenseStore,
+} from './useLicenseStore'
 
 const DAY_MS = 86_400_000
 
@@ -138,5 +143,60 @@ describe('useLicenseStore', () => {
     expect(await useLicenseStore.getState().runExpirationCheck()).toBe(
       'EXPIRED'
     )
+  })
+
+  it('computes whole days remaining rounded up', () => {
+    const now = Date.now()
+    expect(
+      getDaysRemaining(new Date(now + 2 * DAY_MS).toISOString(), now)
+    ).toBe(2)
+    // 2.1 days left rounds up to 3 (calendar days until expiry).
+    expect(
+      getDaysRemaining(new Date(now + 2.1 * DAY_MS).toISOString(), now)
+    ).toBe(3)
+  })
+
+  it('flags isExpiringSoon for an ACTIVE license inside the 3-day window', async () => {
+    useLicenseStore.setState({
+      status: 'ACTIVE',
+      expirationDate: new Date(Date.now() + 2 * DAY_MS).toISOString(),
+    } as Partial<LicenseRecord>)
+
+    await useLicenseStore.getState().runExpirationCheck()
+    const state = useLicenseStore.getState()
+
+    expect(state.status).toBe('ACTIVE')
+    expect(state.daysRemaining).toBe(2)
+    expect(state.isExpiringSoon).toBe(true)
+    expect(state.graceWarning).toBe(true)
+  })
+
+  it('clears isExpiringSoon once the license expires', async () => {
+    useLicenseStore.setState({
+      status: 'ACTIVE',
+      expirationDate: new Date(Date.now() - DAY_MS).toISOString(),
+    } as Partial<LicenseRecord>)
+
+    await useLicenseStore.getState().runExpirationCheck()
+    const state = useLicenseStore.getState()
+
+    expect(state.status).toBe('EXPIRED')
+    expect(state.daysRemaining).toBe(0)
+    expect(state.isExpiringSoon).toBe(false)
+    expect(state.graceWarning).toBe(false)
+  })
+
+  it('keeps isExpiringSoon false for a comfortably valid license', async () => {
+    useLicenseStore.setState({
+      status: 'ACTIVE',
+      expirationDate: new Date(Date.now() + 30 * DAY_MS).toISOString(),
+    } as Partial<LicenseRecord>)
+
+    await useLicenseStore.getState().runExpirationCheck()
+    const state = useLicenseStore.getState()
+
+    expect(state.status).toBe('ACTIVE')
+    expect(state.isExpiringSoon).toBe(false)
+    expect(EXPIRING_SOON_DAYS).toBe(3)
   })
 })

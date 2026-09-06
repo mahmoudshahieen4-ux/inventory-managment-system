@@ -94,7 +94,8 @@ export function InventoryTable() {
     const matchesSearch =
       normalizedSearch === '' ||
       product.name.toLowerCase().includes(normalizedSearch) ||
-      product.sku.toLowerCase().includes(normalizedSearch)
+      product.sku.toLowerCase().includes(normalizedSearch) ||
+      (product.barcode ?? '').toLowerCase().includes(normalizedSearch)
 
     if (!matchesSearch) return false
 

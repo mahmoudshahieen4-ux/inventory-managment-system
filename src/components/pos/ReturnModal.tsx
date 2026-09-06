@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { roundMoney } from '@/lib/money'
 import { useInventoryStore } from '@/store/useInventoryStore'
 import { useSalesStore } from '@/store/useSalesStore'
 import type { ReturnItem, Sale } from '@/types/sales'
@@ -53,7 +54,7 @@ export function ReturnModal({
           sku: item.sku,
           quantity,
           unitPrice: item.unitPrice,
-          lineTotal: quantity * item.unitPrice,
+          lineTotal: roundMoney(quantity * item.unitPrice),
         },
       ]
     })

@@ -1,8 +1,10 @@
 import { Minus, Plus, ShoppingCart, Trash2 } from 'lucide-react'
 import type { ChangeEvent } from 'react'
+import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { registerPosActions, unregisterPosActions } from './pos-actions'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -12,6 +14,7 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { formatMoney } from '@/lib/money'
+import type { StockUpdate } from '@/services/db'
 import { useAuthStore } from '@/store/useAuthStore'
 import {
   roundMoney,
@@ -52,17 +55,20 @@ export function CartSummary({ onCheckoutComplete }: CartSummaryProps) {
     const { items } = useCartStore.getState()
     if (items.length === 0) return
 
-    // 1. Deduct the sold quantities from the inventory immediately.
+    // 1. Compute the post-sale stock for every line (clamped at zero).
     const currentProducts = useInventoryStore.getState().products
+    const stockUpdates: StockUpdate[] = []
     for (const item of items) {
       const product = currentProducts.find(entry => entry.id === item.productId)
       if (!product) continue
-      useInventoryStore.getState().updateProduct(item.productId, {
-        quantity: Math.max(0, product.quantity - item.quantity),
+      stockUpdates.push({
+        productId: item.productId,
+        newQuantity: Math.max(0, product.quantity - item.quantity),
       })
     }
 
-    // 2. Record the completed sale.
+    // 2. Record the completed sale — invoice + line items + stock decrements
+    //    commit in ONE SQLite transaction (atomic checkout).
     const saleItems: SaleItem[] = items.map(item => ({
       ...item,
       lineTotal: roundMoney(item.unitPrice * item.quantity),
@@ -71,22 +77,35 @@ export function CartSummary({ onCheckoutComplete }: CartSummaryProps) {
       ),
     }))
     const cartState = useCartStore.getState()
-    const sale = useSalesStore.getState().addSale({
-      items: saleItems,
-      subtotal: selectCartSubtotal(cartState),
-      tax: selectCartTax(cartState),
-      total: selectCartTotal(cartState),
-      totalProfit: roundMoney(
-        saleItems.reduce((sum, item) => sum + (item.profit ?? 0), 0)
-      ),
-      cashierId: useAuthStore.getState().currentUser?.username ?? 'guest',
-    })
+    const sale = useSalesStore.getState().addSaleAtomic(
+      {
+        items: saleItems,
+        subtotal: selectCartSubtotal(cartState),
+        tax: selectCartTax(cartState),
+        total: selectCartTotal(cartState),
+        totalProfit: roundMoney(
+          saleItems.reduce((sum, item) => sum + (item.profit ?? 0), 0)
+        ),
+        cashierId: useAuthStore.getState().currentUser?.username ?? 'guest',
+      },
+      stockUpdates
+    )
 
-    // 3. Reset the cart for the next sale and hand the receipt to the parent.
+    // 3. Mirror the new quantities into the UI state (already persisted
+    //    atomically — no per-product writes here).
+    useInventoryStore.getState().applyStockDeltas(stockUpdates)
+
+    // 4. Reset the cart for the next sale and hand the receipt to the parent.
     useCartStore.getState().clearCart()
     onCheckoutComplete(sale)
     toast.success(t('pos.toast.saleSuccess'))
   }
+
+  // Expose checkout to the global F2 shortcut (see use-pos-shortcuts).
+  useEffect(() => {
+    registerPosActions({ checkout: handleCheckout })
+    return () => unregisterPosActions()
+  })
 
   const handleQuantityChange = (
     productId: string,

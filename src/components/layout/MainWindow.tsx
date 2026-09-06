@@ -11,6 +11,7 @@ import { CommandPalette } from '@/components/command-palette/CommandPalette'
 import { PreferencesDialog } from '@/components/preferences/PreferencesDialog'
 import { Toaster } from 'sonner'
 import { useTheme } from '@/hooks/use-theme'
+import { cn } from '@/lib/utils'
 import { useUIStore } from '@/store/ui-store'
 import { useMainWindowEventListeners } from '@/hooks/useMainWindowEventListeners'
 
@@ -46,18 +47,17 @@ export function MainWindow() {
           className="h-full min-w-screen w-screen"
           direction="horizontal"
         >
-          {leftSidebarVisible && (
-            <>
-              <ResizablePanel
-                defaultSize={LAYOUT.leftSidebar.default}
-                minSize={LAYOUT.leftSidebar.min}
-                maxSize={LAYOUT.leftSidebar.max}
-              >
-                <LeftSideBar />
-              </ResizablePanel>
-              <ResizableHandle />
-            </>
-          )}
+          {/* Sidebars stay MOUNTED and are hidden via CSS (`hidden`) instead of
+              unmounting — preserves scroll positions and inner form state. */}
+          <ResizablePanel
+            defaultSize={LAYOUT.leftSidebar.default}
+            minSize={LAYOUT.leftSidebar.min}
+            maxSize={LAYOUT.leftSidebar.max}
+            className={cn(!leftSidebarVisible && 'hidden')}
+          >
+            <LeftSideBar />
+          </ResizablePanel>
+          <ResizableHandle className={cn(!leftSidebarVisible && 'hidden')} />
 
           <ResizablePanel
             defaultSize={mainContentDefault}
@@ -66,18 +66,15 @@ export function MainWindow() {
             <MainWindowContent />
           </ResizablePanel>
 
-          {rightSidebarVisible && (
-            <>
-              <ResizableHandle />
-              <ResizablePanel
-                defaultSize={LAYOUT.rightSidebar.default}
-                minSize={LAYOUT.rightSidebar.min}
-                maxSize={LAYOUT.rightSidebar.max}
-              >
-                <RightSideBar />
-              </ResizablePanel>
-            </>
-          )}
+          <ResizableHandle className={cn(!rightSidebarVisible && 'hidden')} />
+          <ResizablePanel
+            defaultSize={LAYOUT.rightSidebar.default}
+            minSize={LAYOUT.rightSidebar.min}
+            maxSize={LAYOUT.rightSidebar.max}
+            className={cn(!rightSidebarVisible && 'hidden')}
+          >
+            <RightSideBar />
+          </ResizablePanel>
         </ResizablePanelGroup>
       </div>
 

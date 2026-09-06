@@ -1,9 +1,16 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useSalesStore } from '@/store/useSalesStore'
 
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { useBarcodeScanner } from '@/hooks/useBarcodeScanner'
+import { usePosShortcuts } from '@/hooks/use-pos-shortcuts'
+import { playScanBeep } from '@/lib/barcode'
+import { findProductByBarcode, isTauriRuntime } from '@/services/db'
+import { useCartStore } from '@/store/useCartStore'
+import { useInventoryStore } from '@/store/useInventoryStore'
 import type { CreditNote, ReturnItem, Sale } from '@/types/sales'
 import { CartSummary } from './CartSummary'
 import { ProductCatalog } from './ProductCatalog'
@@ -29,6 +36,70 @@ export function POSScreen() {
   const [returnSale, setReturnSale] = useState<Sale | null>(null)
   const [creditNote, setCreditNote] = useState<CreditNote | null>(null)
   const [creditNoteOpen, setCreditNoteOpen] = useState(false)
+  const [catalogSearch, setCatalogSearch] = useState('')
+
+  /**
+   * Hands-free barcode scanning: USB/Bluetooth scanners behave like keyboards,
+   * so the hook replays their output to this callback on `Enter`.
+   */
+  const handleScan = async (scanned: string): Promise<void> => {
+    const code = scanned.trim()
+    const product =
+      useInventoryStore
+        .getState()
+        .products.find(entry => entry.barcode === code || entry.sku === code) ??
+      // Safety net: the in-memory store may not be hydrated yet in desktop.
+      (isTauriRuntime() ? await findProductByBarcode(code) : null)
+
+    if (!product) {
+      toast.error(t('pos.scan.notFound', { barcode: code }))
+      return
+    }
+    if (product.quantity <= 0) {
+      toast.error(t('pos.scan.outOfStock', { name: product.name }))
+      return
+    }
+    const inCart =
+      useCartStore.getState().items.find(item => item.productId === product.id)
+        ?.quantity ?? 0
+    if (inCart >= product.quantity) {
+      toast.error(t('pos.scan.maxStock', { qty: product.quantity }))
+      return
+    }
+
+    useCartStore.getState().addToCart(product)
+    // Clear the catalog search so leaked scanner keystrokes never linger.
+    setCatalogSearch('')
+    playScanBeep()
+    toast.success(t('pos.scan.added', { name: product.name }))
+  }
+
+  // Only listen while the catalog (sales) panel is visible; the sales-history
+  // search box has its own barcode-aware filter.
+  useBarcodeScanner(
+    scanned => {
+      void handleScan(scanned)
+    },
+    { enabled: tab === 'catalog' }
+  )
+
+  // Keyboard-driven POS flow: F1 new sale, F2 cash payment, F12 print, ESC clear.
+  usePosShortcuts({
+    onNewSale: () => {
+      useCartStore.getState().clearCart()
+      setCatalogSearch('')
+      setTab('catalog')
+      toast.info(t('pos.toast.cartCleared'))
+    },
+    onClearCart: () => {
+      useCartStore.getState().clearCart()
+      toast.info(t('pos.toast.cartCleared'))
+    },
+    onPrintReceipt: () => {
+      // Printing is only meaningful while the receipt modal is open.
+      if (receiptOpen) window.print()
+    },
+  })
 
   return (
     <div className="grid h-full min-h-0 w-full min-w-0 grid-cols-12 gap-4 overflow-y-auto overflow-x-hidden px-3 py-3 sm:px-4 sm:py-4">
@@ -61,7 +132,10 @@ export function POSScreen() {
         </div>
 
         {tab === 'catalog' ? (
-          <ProductCatalog />
+          <ProductCatalog
+            search={catalogSearch}
+            onSearchChange={setCatalogSearch}
+          />
         ) : (
           <SalesHistory
             onReprint={sale => {

@@ -40,6 +40,7 @@ function getDb(): Promise<Database> {
           purchase_price REAL NOT NULL DEFAULT 0,
           selling_price REAL NOT NULL DEFAULT 0,
           category TEXT NOT NULL DEFAULT '',
+          barcode TEXT,
           unit TEXT,
           units_per_carton INTEGER,
           updated_at TEXT NOT NULL
@@ -158,6 +159,26 @@ function getDb(): Promise<Database> {
       await db.execute(
         'CREATE INDEX IF NOT EXISTS idx_sale_items_sale_id ON sale_items(sale_id)'
       )
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)'
+      )
+      // Query-plan indexes: sales-history date scans, SKU/barcode lookups
+      // from the POS search and scanner, and credit-note item joins.
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_sales_created_at ON sales(created_at)'
+      )
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku)'
+      )
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_credit_notes_created_at ON credit_notes(created_at)'
+      )
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_credit_note_items_note_id ON credit_note_items(credit_note_id)'
+      )
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_sale_items_product_id ON sale_items(product_id)'
+      )
       await db.execute(`CREATE TABLE IF NOT EXISTS license (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         license_key TEXT,
@@ -190,6 +211,12 @@ function getDb(): Promise<Database> {
         })
       await db
         .execute('ALTER TABLE products ADD COLUMN units_per_carton INTEGER')
+        .catch(() => {
+          // Column already exists — nothing to do.
+        })
+      // Barcode support (barcode scanners, see src/hooks/useBarcodeScanner.ts).
+      await db
+        .execute('ALTER TABLE products ADD COLUMN barcode TEXT')
         .catch(() => {
           // Column already exists — nothing to do.
         })
@@ -249,6 +276,7 @@ interface ProductRow {
   id: string
   name: string
   sku: string
+  barcode: string | null
   quantity: number
   min_threshold: number
   purchase_price: number
@@ -264,6 +292,7 @@ function toProduct(row: ProductRow): Product {
     id: row.id,
     name: row.name,
     sku: row.sku,
+    barcode: row.barcode ?? undefined,
     quantity: row.quantity,
     minThreshold: row.min_threshold,
     purchasePrice: row.purchase_price,
@@ -281,15 +310,36 @@ function toProduct(row: ProductRow): Product {
 export async function fetchProducts(): Promise<Product[]> {
   const db = await getDb()
   const rows = await db.select<ProductRow[]>(
-    'SELECT id, name, sku, quantity, min_threshold, purchase_price, selling_price, category, unit, units_per_carton, updated_at FROM products ORDER BY name'
+    'SELECT id, name, sku, barcode, quantity, min_threshold, purchase_price, selling_price, category, unit, units_per_carton, updated_at FROM products ORDER BY name'
   )
   return rows.map(toProduct)
+}
+
+/**
+ * Looks up a single product by its scanned barcode, falling back to the human
+ * readable SKU. Serves as a safety net for the POS scanner when the in-memory
+ * store has not been hydrated yet (or went stale).
+ */
+export async function findProductByBarcode(
+  barcode: string
+): Promise<Product | null> {
+  const db = await getDb()
+  const rows = await db.select<ProductRow[]>(
+    `SELECT id, name, sku, barcode, quantity, min_threshold, purchase_price,
+            selling_price, category, unit, units_per_carton, updated_at
+     FROM products
+     WHERE barcode = $1 OR sku = $1
+     LIMIT 1`,
+    [barcode]
+  )
+  const row = rows[0]
+  return row ? toProduct(row) : null
 }
 
 export async function insertProduct(product: Product): Promise<void> {
   const db = await getDb()
   await db.execute(
-    'INSERT INTO products (id, name, sku, quantity, min_threshold, purchase_price, selling_price, category, unit, units_per_carton, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
+    'INSERT INTO products (id, name, sku, quantity, min_threshold, purchase_price, selling_price, category, unit, units_per_carton, barcode, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)',
     [
       product.id,
       product.name,
@@ -301,6 +351,7 @@ export async function insertProduct(product: Product): Promise<void> {
       product.category,
       product.unit ?? null,
       product.unitsPerCarton ?? null,
+      product.barcode ?? null,
       new Date().toISOString(),
     ]
   )
@@ -309,7 +360,7 @@ export async function insertProduct(product: Product): Promise<void> {
 export async function updateProductRow(product: Product): Promise<void> {
   const db = await getDb()
   await db.execute(
-    'UPDATE products SET name = $1, sku = $2, quantity = $3, min_threshold = $4, purchase_price = $5, selling_price = $6, category = $7, unit = $8, units_per_carton = $9, updated_at = $10 WHERE id = $11',
+    'UPDATE products SET name = $1, sku = $2, quantity = $3, min_threshold = $4, purchase_price = $5, selling_price = $6, category = $7, unit = $8, units_per_carton = $9, barcode = $10, updated_at = $11 WHERE id = $12',
     [
       product.name,
       product.sku,
@@ -320,6 +371,7 @@ export async function updateProductRow(product: Product): Promise<void> {
       product.category,
       product.unit ?? null,
       product.unitsPerCarton ?? null,
+      product.barcode ?? null,
       new Date().toISOString(),
       product.id,
     ]
@@ -356,36 +408,129 @@ interface SaleItemRow {
   profit: number
 }
 
-/** Inserts the invoice header and its item lines. */
+/**
+ * Runs `work` inside a single SQLite transaction (`BEGIN IMMEDIATE` /
+ * `COMMIT`, with `ROLLBACK` on any failure) so multi-step writes either
+ * fully apply or leave no trace — a crash mid-checkout can never persist a
+ * half-written invoice.
+ *
+ * The plugin draws statements from a sqlx pool (up to 10 connections), and
+ * `BEGIN`/`COMMIT` must land on the SAME connection as the statements between
+ * them. Our awaits are sequential, but a concurrent caller (e.g. a hydrate
+ * racing a checkout) could otherwise grab a second pooled connection
+ * mid-transaction — so every transaction is chained onto one promise.
+ */
+let transactionChain: Promise<unknown> = Promise.resolve()
+
+async function withTransaction<T>(
+  work: (db: Database) => Promise<T>
+): Promise<T> {
+  const run = transactionChain.then(async () => {
+    const db = await getDb()
+    await db.execute('BEGIN IMMEDIATE')
+    try {
+      const result = await work(db)
+      await db.execute('COMMIT')
+      return result
+    } catch (error) {
+      // Never mask the original error if the rollback itself fails.
+      await db.execute('ROLLBACK').catch(() => undefined)
+      throw error
+    }
+  })
+  // Keep the chain alive even when a transaction fails.
+  transactionChain = run.catch(() => undefined)
+  return run
+}
+
+/**
+ * Inserts the invoice header and its item lines inside a single SQLite
+ * transaction — a crash mid-write can never leave line items without their
+ * invoice or an invoice without its lines.
+ */
 export async function persistSale(sale: Sale): Promise<void> {
-  const db = await getDb()
-  await db.execute(
-    'INSERT INTO sales (id, invoice_number, total_amount, total_profit, cashier_name, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
-    [
-      sale.id,
-      sale.invoiceNumber,
-      sale.total,
-      sale.totalProfit ?? 0,
-      sale.cashierId,
-      sale.createdAt,
-    ]
-  )
-  for (const item of sale.items) {
+  await withTransaction(async db => {
     await db.execute(
-      'INSERT INTO sale_items (id, sale_id, product_id, product_name, quantity, purchase_price, unit_price, total_price, profit) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+      'INSERT INTO sales (id, invoice_number, total_amount, total_profit, cashier_name, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
       [
-        crypto.randomUUID(),
         sale.id,
-        item.productId,
-        item.name,
-        item.quantity,
-        item.purchasePrice ?? 0,
-        item.unitPrice,
-        item.lineTotal,
-        item.profit ?? 0,
+        sale.invoiceNumber,
+        sale.total,
+        sale.totalProfit ?? 0,
+        sale.cashierId,
+        sale.createdAt,
       ]
     )
-  }
+    for (const item of sale.items) {
+      await db.execute(
+        'INSERT INTO sale_items (id, sale_id, product_id, product_name, quantity, purchase_price, unit_price, total_price, profit) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+        [
+          crypto.randomUUID(),
+          sale.id,
+          item.productId,
+          item.name,
+          item.quantity,
+          item.purchasePrice ?? 0,
+          item.unitPrice,
+          item.lineTotal,
+          item.profit ?? 0,
+        ]
+      )
+    }
+  })
+}
+
+/** Absolute post-sale quantity for one product (already clamped >= 0). */
+export interface StockUpdate {
+  productId: string
+  newQuantity: number
+}
+
+/**
+ * Atomically records a sale AND applies the inventory decrement: invoice
+ * header + line items + stock updates commit together or not at all, so a
+ * crash between "save invoice" and "decrement stock" can never desynchronize
+ * inventory from sales history.
+ */
+export async function persistSaleAtomic(
+  sale: Sale,
+  stockUpdates: StockUpdate[]
+): Promise<void> {
+  await withTransaction(async db => {
+    await db.execute(
+      'INSERT INTO sales (id, invoice_number, total_amount, total_profit, cashier_name, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
+      [
+        sale.id,
+        sale.invoiceNumber,
+        sale.total,
+        sale.totalProfit ?? 0,
+        sale.cashierId,
+        sale.createdAt,
+      ]
+    )
+    for (const item of sale.items) {
+      await db.execute(
+        'INSERT INTO sale_items (id, sale_id, product_id, product_name, quantity, purchase_price, unit_price, total_price, profit) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+        [
+          crypto.randomUUID(),
+          sale.id,
+          item.productId,
+          item.name,
+          item.quantity,
+          item.purchasePrice ?? 0,
+          item.unitPrice,
+          item.lineTotal,
+          item.profit ?? 0,
+        ]
+      )
+    }
+    for (const update of stockUpdates) {
+      await db.execute('UPDATE products SET quantity = $1 WHERE id = $2', [
+        update.newQuantity,
+        update.productId,
+      ])
+    }
+  })
 }
 
 /** Loads every stored invoice (with item lines), newest first. */
@@ -427,35 +572,37 @@ export async function fetchSales(): Promise<Sale[]> {
   }))
 }
 
+/** Inserts a credit note and its item lines in one transaction. */
 export async function persistCreditNote(note: CreditNote): Promise<void> {
-  const db = await getDb()
-  await db.execute(
-    'INSERT INTO credit_notes (id, credit_note_number, original_invoice_number, original_sale_id, total_amount, cashier_name, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-    [
-      note.id,
-      note.creditNoteNumber,
-      note.originalInvoiceNumber,
-      note.originalSaleId,
-      note.total,
-      note.cashierId,
-      note.createdAt,
-    ]
-  )
-  for (const item of note.items) {
+  await withTransaction(async db => {
     await db.execute(
-      'INSERT INTO credit_note_items (id, credit_note_id, product_id, product_name, quantity, sku, unit_price, total_price) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+      'INSERT INTO credit_notes (id, credit_note_number, original_invoice_number, original_sale_id, total_amount, cashier_name, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)',
       [
-        crypto.randomUUID(),
         note.id,
-        item.productId,
-        item.name,
-        item.quantity,
-        item.sku,
-        item.unitPrice,
-        item.lineTotal,
+        note.creditNoteNumber,
+        note.originalInvoiceNumber,
+        note.originalSaleId,
+        note.total,
+        note.cashierId,
+        note.createdAt,
       ]
     )
-  }
+    for (const item of note.items) {
+      await db.execute(
+        'INSERT INTO credit_note_items (id, credit_note_id, product_id, product_name, quantity, sku, unit_price, total_price) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+        [
+          crypto.randomUUID(),
+          note.id,
+          item.productId,
+          item.name,
+          item.quantity,
+          item.sku,
+          item.unitPrice,
+          item.lineTotal,
+        ]
+      )
+    }
+  })
 }
 
 export async function fetchCreditNotes(): Promise<CreditNote[]> {

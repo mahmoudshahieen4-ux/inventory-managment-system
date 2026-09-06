@@ -1,15 +1,88 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
+
+import { Button } from '@/components/ui/button'
 import { saveCrashState } from '@/lib/recovery'
 import { logger } from '@/lib/logger'
 
 interface Props {
   children: ReactNode
+  /**
+   * 'page' (default) renders the full-screen crash screen (app root);
+   * 'section' renders a compact inline card so one broken view (POS,
+   * Inventory, Reports) cannot take down the rest of the app.
+   */
+  variant?: 'page' | 'section'
+  /** Human-readable section name shown in the `section` fallback (e.g. "POS"). */
+  section?: string
+  /**
+   * When this key changes, the boundary auto-resets — used per-view so
+   * switching views gives the failed section a fresh mount.
+   */
+  resetKey?: string
 }
 
 interface State {
   hasError: boolean
   error?: Error
   errorInfo?: ErrorInfo
+  /** Tracks the resetKey the current error state belongs to. */
+  resetKey?: string
+}
+
+/**
+ * Inline fallback for `variant="section"` — a functional component so it can
+ * use `useTranslation()` (class components cannot). Keeps the app shell alive:
+ * a broken view shows a compact recovery card instead of freezing everything.
+ */
+function SectionErrorFallback({
+  section,
+  error,
+  onReset,
+}: {
+  section?: string
+  error?: Error
+  onReset: () => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <div
+      role="alert"
+      className="flex h-full flex-col items-center justify-center gap-3 p-6"
+    >
+      <div className="bg-destructive/10 text-destructive flex size-12 items-center justify-center rounded-full">
+        <svg
+          className="size-6"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.082 16.5c-.77.833.192 2.5 1.732 2.5z"
+          />
+        </svg>
+      </div>
+      <p className="text-foreground font-medium">
+        {t('errors.sectionCrashed', {
+          section: section ?? t('errors.sectionUnknown'),
+        })}
+      </p>
+      <p className="text-muted-foreground text-sm">
+        {t('errors.sectionCrashedHint')}
+      </p>
+      <Button variant="outline" onClick={onReset}>
+        {t('errors.sectionRetry')}
+      </Button>
+      {import.meta.env.DEV && error && (
+        <pre className="text-muted-foreground max-w-md overflow-auto rounded bg-muted p-2 text-xs">
+          {error.message}
+        </pre>
+      )}
+    </div>
+  )
 }
 
 /**
@@ -29,6 +102,21 @@ export class ErrorBoundary extends Component<Props, State> {
     return {
       hasError: true,
       error,
+    }
+  }
+
+  override componentDidUpdate(prevProps: Props) {
+    // Auto-reset when the parent switches the section (e.g. view change).
+    if (
+      this.state.hasError &&
+      this.props.resetKey !== undefined &&
+      this.props.resetKey !== prevProps.resetKey
+    ) {
+      this.setState({
+        hasError: false,
+        error: undefined,
+        errorInfo: undefined,
+      })
     }
   }
 
@@ -78,6 +166,16 @@ export class ErrorBoundary extends Component<Props, State> {
 
   override render() {
     if (this.state.hasError) {
+      if (this.props.variant === 'section') {
+        return (
+          <SectionErrorFallback
+            section={this.props.section}
+            error={this.state.error}
+            onReset={this.handleReset}
+          />
+        )
+      }
+
       return (
         <div className="flex min-h-screen flex-col items-center justify-center bg-background p-8">
           <div className="w-full max-w-md text-center">

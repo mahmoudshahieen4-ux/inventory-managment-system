@@ -11,6 +11,7 @@ import {
   isTauriRuntime,
   updateProductRow,
 } from '@/services/db'
+import type { StockUpdate } from '@/services/db'
 import type { NewProduct, Product } from '@/types/inventory'
 
 /**
@@ -27,6 +28,7 @@ export const initialProducts: Product[] = [
     id: 'prod-001',
     name: 'Espresso Beans 1kg',
     sku: 'COF-001',
+    barcode: '6291041500213',
     quantity: 0,
     minThreshold: 10,
     purchasePrice: 12.5,
@@ -40,6 +42,7 @@ export const initialProducts: Product[] = [
     id: 'prod-002',
     name: 'Whole Milk 1L',
     sku: 'DAI-002',
+    barcode: '6291051500210',
     quantity: 5,
     minThreshold: 10,
     purchasePrice: 1.2,
@@ -52,6 +55,7 @@ export const initialProducts: Product[] = [
     id: 'prod-003',
     name: 'Butter Croissant',
     sku: 'BAK-003',
+    barcode: '6291061500217',
     quantity: 8,
     minThreshold: 8,
     purchasePrice: 0.9,
@@ -64,6 +68,7 @@ export const initialProducts: Product[] = [
     id: 'prod-004',
     name: 'Dark Chocolate Bar',
     sku: 'SNK-004',
+    barcode: '6291071500214',
     quantity: 50,
     minThreshold: 15,
     purchasePrice: 0.8,
@@ -76,6 +81,7 @@ export const initialProducts: Product[] = [
     id: 'prod-005',
     name: 'Bottled Water 500ml',
     sku: 'BEV-005',
+    barcode: '6291081500211',
     quantity: 120,
     minThreshold: 24,
     purchasePrice: 0.35,
@@ -89,6 +95,12 @@ interface InventoryState {
   products: Product[]
   addProduct: (product: NewProduct) => Product
   updateProduct: (id: string, updates: Partial<NewProduct>) => void
+  /**
+   * Applies post-checkout quantity changes to the UI state only — the
+   * authoritative write already happened inside the atomic sale transaction,
+   * so no per-product persistence runs here.
+   */
+  applyStockDeltas: (updates: StockUpdate[]) => void
   deleteProduct: (id: string) => void
   /** Loads stored products from SQLite; seeds the database on first launch. */
   hydrate: () => Promise<void>
@@ -107,6 +119,7 @@ interface ProductCoerceInput {
   id?: string
   name?: string
   sku?: string
+  barcode?: string
   quantity?: number | string
   minThreshold?: number | string
   purchasePrice?: number | string
@@ -126,6 +139,7 @@ function coerceProduct(product: ProductCoerceInput): Product {
     id: product.id ?? createProductId(),
     name: product.name ?? '',
     sku: product.sku?.trim() || createProductSku(),
+    barcode: product.barcode?.trim() || undefined,
     quantity: Number(product.quantity) || 0,
     minThreshold: Number(product.minThreshold) || 0,
     purchasePrice: Number(product.purchasePrice) || 0,
@@ -172,6 +186,24 @@ export const useInventoryStore = create<InventoryState>()(
         if (current) {
           persist(() => updateProductRow(merged))
         }
+      },
+
+      applyStockDeltas: updates => {
+        if (updates.length === 0) return
+        set(
+          state => ({
+            products: state.products.map(product => {
+              const update = updates.find(
+                entry => entry.productId === product.id
+              )
+              return update
+                ? { ...product, quantity: update.newQuantity }
+                : product
+            }),
+          }),
+          undefined,
+          'inventory/applyStockDeltas'
+        )
       },
 
       deleteProduct: id => {

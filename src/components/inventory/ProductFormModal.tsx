@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { Save, PackagePlus } from 'lucide-react'
+import { Save, PackagePlus, Sparkles, Wand } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { generateBarcode } from '@/lib/barcode'
 import { useInventoryStore } from '@/store/useInventoryStore'
 import type { NewProduct, Product } from '@/types/inventory'
 
@@ -24,6 +25,7 @@ type Translate = ReturnType<typeof useTranslation>['t']
 interface ProductFormValues {
   name: string
   sku: string
+  barcode: string
   category: string
   unit: string
   unitsPerCarton: string
@@ -45,6 +47,7 @@ interface ProductFormModalProps {
 const EMPTY_VALUES: ProductFormValues = {
   name: '',
   sku: '',
+  barcode: '',
   category: '',
   unit: '',
   unitsPerCarton: '',
@@ -65,6 +68,7 @@ function toFormValues(product: Product): ProductFormValues {
   return {
     name: product.name,
     sku: product.sku,
+    barcode: product.barcode ?? '',
     category: product.category,
     unit: product.unit ?? '',
     unitsPerCarton: product.unitsPerCarton
@@ -83,7 +87,21 @@ function parseNumber(value: string): number {
   return Number(normalized)
 }
 
-function validate(values: ProductFormValues, t: Translate): FormErrors {
+/**
+ * Generates a readable product code that doubles as a scannable barcode.
+ * Mirrors the store's `createProductSku()` pattern so codes stay consistent:
+ * `PRD-` prefix + 8 uppercase hex characters from a random UUID.
+ */
+function generateProductCode(): string {
+  return `PRD-${crypto.randomUUID().slice(0, 8).toUpperCase()}`
+}
+
+function validate(
+  values: ProductFormValues,
+  t: Translate,
+  products: Product[],
+  editingId?: string
+): FormErrors {
   const errors: FormErrors = {}
   const required = t('inventory.form.validation.required')
   const notANumber = t('inventory.form.validation.number')
@@ -91,6 +109,18 @@ function validate(values: ProductFormValues, t: Translate): FormErrors {
 
   if (!values.name.trim()) errors.name = required
   if (!values.category.trim()) errors.category = required
+
+  // Barcode is optional, but when set it must be unique across the catalog so a
+  // scanner can always resolve exactly one product.
+  const barcode = values.barcode.trim()
+  if (
+    barcode &&
+    products.some(
+      product => product.id !== editingId && product.barcode === barcode
+    )
+  ) {
+    errors.barcode = t('inventory.form.validation.barcodeExists')
+  }
 
   if (values.unit === 'كرتونة') {
     const unitsPerCarton = parseNumber(values.unitsPerCarton)
@@ -123,6 +153,7 @@ export function ProductFormModal({
   const { t } = useTranslation()
   const addProduct = useInventoryStore(state => state.addProduct)
   const updateProduct = useInventoryStore(state => state.updateProduct)
+  const products = useInventoryStore(state => state.products)
   const [values, setValues] = useState<ProductFormValues>(() =>
     product ? toFormValues(product) : EMPTY_VALUES
   )
@@ -151,16 +182,27 @@ export function ProductFormModal({
     }
   }
 
+  const handleGenerateSku = () => {
+    setValues(current => ({ ...current, sku: generateProductCode() }))
+    setErrors(current => ({ ...current, sku: undefined }))
+  }
+
+  const handleGenerateBarcode = () => {
+    setValues(current => ({ ...current, barcode: generateBarcode() }))
+    setErrors(current => ({ ...current, barcode: undefined }))
+  }
+
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
 
-    const nextErrors = validate(values, t)
+    const nextErrors = validate(values, t, products, product?.id)
     setErrors(nextErrors)
     if (Object.keys(nextErrors).length > 0) return
 
     const payload: NewProduct = {
       name: values.name.trim(),
       sku: values.sku.trim(),
+      barcode: values.barcode.trim() || undefined,
       category: values.category.trim(),
       unit: values.unit.trim() || undefined,
       unitsPerCarton:
@@ -220,16 +262,61 @@ export function ProductFormModal({
 
           <div className="grid gap-1.5">
             <Label htmlFor="product-sku">{t('inventory.form.sku')}</Label>
-            <Input
-              id="product-sku"
-              value={values.sku}
-              onChange={setField('sku')}
-              placeholder={t('inventory.form.skuPlaceholder')}
-              aria-invalid={errors.sku ? true : undefined}
-            />
+            <div className="flex gap-2">
+              <Input
+                id="product-sku"
+                value={values.sku}
+                onChange={setField('sku')}
+                placeholder={t('inventory.form.skuPlaceholder')}
+                className="min-w-0 flex-1"
+                aria-invalid={errors.sku ? true : undefined}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                onClick={handleGenerateSku}
+              >
+                <Sparkles className="size-4" />
+                {t('inventory.form.generateBarcode')}
+              </Button>
+            </div>
             {errors.sku && (
               <p className="text-destructive text-sm" role="alert">
                 {errors.sku}
+              </p>
+            )}
+          </div>
+
+          <div className="grid gap-1.5 sm:col-span-2">
+            <Label htmlFor="product-barcode">
+              {t('inventory.form.barcode')}
+            </Label>
+            <div className="flex gap-2">
+              <Input
+                id="product-barcode"
+                value={values.barcode}
+                onChange={setField('barcode')}
+                placeholder={t('inventory.form.barcodePlaceholder')}
+                autoFocus={!product}
+                className="min-w-0 flex-1"
+                aria-invalid={errors.barcode ? true : undefined}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                onClick={handleGenerateBarcode}
+              >
+                <Wand className="size-4" />
+                {t('inventory.form.generateEan13')}
+              </Button>
+            </div>
+            {errors.barcode && (
+              <p className="text-destructive text-sm" role="alert">
+                {errors.barcode}
               </p>
             )}
           </div>

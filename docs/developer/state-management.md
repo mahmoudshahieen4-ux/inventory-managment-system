@@ -194,7 +194,7 @@ This app uses React Compiler which automatically handles memoization. You do **n
 **Sales store** - `useSalesStore` (see `src/store/useSalesStore.ts`):
 
 - Completed transaction log: `sales: Sale[]`, newest first, each with a sequential `invoiceNumber` (`INV-0001`…)
-- `addSale(sale)` generates the `id` (`crypto.randomUUID()`), the `invoiceNumber` and the `createdAt` timestamp, prepends the record, and returns it (so callers can hand it to a receipt modal)
+- `addSaleAtomic(sale, stockUpdates)` is the **only** way to record a sale: it generates the `id` (`crypto.randomUUID()`), `invoiceNumber` and `createdAt`, prepends the record, and commits the invoice + line items + stock decrements in **one SQLite transaction** (`persistSaleAtomic`). Stock is applied to the UI via `useInventoryStore.applyStockDeltas`. (The legacy non-atomic `addSale` was removed so a checkout can never half-commit.)
 - `getSaleById(id)` retrieves a stored invoice for re-printing from sales history
 
 ## Adding a New Store

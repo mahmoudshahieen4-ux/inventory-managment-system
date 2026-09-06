@@ -61,11 +61,15 @@ pulsed timestamp — so setting the Windows clock backwards cannot extend a
 subscription. The UTC-vs-UTC expiry comparison also neutralizes timezone
 games.
 
-### Grace-period warning
+### Expiring-soon warning
 
-The store derives `daysRemaining` and `graceWarning` (ACTIVE license with ≤ 3
-days left, see `EXPIRING_SOON_DAYS`). `GracePeriodBanner` renders an amber
-warning with a **Renew Now** button while `graceWarning` is true.
+The store derives `daysRemaining`, `isExpiringSoon` and the legacy alias
+`graceWarning` (ACTIVE subscription with ≤ 3 days left, see
+`EXPIRING_SOON_DAYS`). `SubscriptionBanner` renders an amber **non-blocking**
+warning with a **Renew Now / Contact Support** button that opens a renewal
+dialog (Machine ID, expiry date, days left, WhatsApp/phone contacts) while
+`isExpiringSoon` is true. The app stays fully functional until the status
+flips to `EXPIRED` / `BLOCKED`, which is when the `LicenseLockModal` takes over.
 
 ## Files
 
@@ -76,7 +80,7 @@ warning with a **Renew Now** button while `graceWarning` is true.
 | `src/services/localLicenseRepository.ts`            | `getLicense()` / `saveLicense()` adapters      |
 | `src/services/licenseSync.ts`                       | `syncSubscriptionWithCloud()` + status mapping |
 | `src/store/useLicenseStore.ts`                      | `initialize(machineId?)`, `syncWithCloud()`    |
-| `src/components/auth/GracePeriodBanner.tsx`         | ≤ 3-days renewal warning                       |
+| `src/components/license/SubscriptionBanner.tsx`     | ≤ 3-days renewal warning                       |
 | `src/components/auth/useLicenseGuard.ts`            | Boot sync + hourly expiration checks           |
 
 ## Setup
@@ -105,6 +109,6 @@ warning with a **Renew Now** button while `graceWarning` is true.
 
 `src/services/licenseSync.test.ts` mocks `./supabase` and `@/services/db` to
 cover every sync outcome plus the pure helpers (`resolveLocalStatus`,
-`mergeCloudSubscription`). `GracePeriodBanner.test.tsx` follows the
+`mergeCloudSubscription`). `SubscriptionBanner.test.tsx` follows the
 `TrialBanner` test pattern. In the browser dev server / unit tests the sync
 is a no-op (`isSupabaseConfigured()` / `isTauriRuntime()` guards).

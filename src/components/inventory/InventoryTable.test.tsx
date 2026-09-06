@@ -60,6 +60,16 @@ describe('InventoryTable', () => {
     expect(screen.queryByText('Whole Milk 1L')).not.toBeInTheDocument()
   })
 
+  it('filters products by barcode', async () => {
+    const user = userEvent.setup()
+    render(<InventoryTable />)
+
+    await user.type(screen.getByLabelText(/search/i), '6291071500214')
+
+    expect(screen.getByText('Dark Chocolate Bar')).toBeInTheDocument()
+    expect(screen.queryByText('Espresso Beans 1kg')).not.toBeInTheDocument()
+  })
+
   it('shows an empty state when no products match', async () => {
     const user = userEvent.setup()
     render(<InventoryTable />)

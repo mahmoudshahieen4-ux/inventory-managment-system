@@ -1,5 +1,6 @@
+import { fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { render, screen, within } from '@/test/test-utils'
 import { useAuthStore } from '@/store/useAuthStore'
@@ -7,6 +8,29 @@ import { useCartStore } from '@/store/useCartStore'
 import { initialProducts, useInventoryStore } from '@/store/useInventoryStore'
 import { useSalesStore } from '@/store/useSalesStore'
 import { POSScreen } from './POSScreen'
+
+const { toastError, toastSuccess, toastInfo } = vi.hoisted(() => ({
+  toastError: vi.fn(),
+  toastSuccess: vi.fn(),
+  toastInfo: vi.fn(),
+}))
+
+vi.mock('sonner', () => ({
+  toast: {
+    error: toastError,
+    success: toastSuccess,
+    info: toastInfo,
+    warning: () => undefined,
+  },
+}))
+
+/** Fires a scanner-style burst: rapid single-character keydowns + Enter. */
+function scanCode(code: string): void {
+  for (const char of code) {
+    fireEvent.keyDown(window, { key: char })
+  }
+  fireEvent.keyDown(window, { key: 'Enter' })
+}
 
 /** Finds the catalog card container for a product by its name. */
 function getCard(productName: string): HTMLElement {
@@ -17,6 +41,9 @@ function getCard(productName: string): HTMLElement {
 
 describe('POSScreen', () => {
   beforeEach(() => {
+    toastError.mockClear()
+    toastSuccess.mockClear()
+    toastInfo.mockClear()
     useInventoryStore.setState({ products: initialProducts })
     useCartStore.setState({ items: [] })
     useSalesStore.setState({ sales: [] })
@@ -51,7 +78,9 @@ describe('POSScreen', () => {
   })
 
   it('filters products instantly by name and SKU', async () => {
-    const user = userEvent.setup()
+    // Human-like typing delay keeps the keystrokes outside the scanner burst
+    // window, so the global scanner hook must not swallow them.
+    const user = userEvent.setup({ delay: 100 })
     render(<POSScreen />)
 
     const search = screen.getByLabelText('Search products')
@@ -191,5 +220,76 @@ describe('POSScreen', () => {
     )
     expect(await screen.findByText('Receipt')).toBeInTheDocument()
     expect(screen.getByText('Invoice No.: INV-0001')).toBeInTheDocument()
+  })
+
+  it('adds a product to the cart when its barcode is scanned hands-free', () => {
+    render(<POSScreen />)
+
+    scanCode('6291071500214') // Dark Chocolate Bar
+
+    expect(useCartStore.getState().items.at(0)).toMatchObject({
+      productId: 'prod-004',
+      quantity: 1,
+    })
+    expect(toastSuccess).toHaveBeenCalledWith(
+      'Dark Chocolate Bar added to cart'
+    )
+  })
+
+  it('clears the catalog search box after a successful scan', () => {
+    render(<POSScreen />)
+
+    const search = screen.getByLabelText('Search products')
+    // Simulate a leaked first keystroke landing in the search box.
+    fireEvent.change(search, { target: { value: '6' } })
+    expect(search).toHaveValue('6')
+
+    scanCode('6291071500214')
+    expect(search).toHaveValue('')
+  })
+
+  it('increments an existing cart line when the same barcode is scanned twice', () => {
+    render(<POSScreen />)
+
+    scanCode('6291071500214')
+    scanCode('6291071500214')
+
+    expect(useCartStore.getState().items.at(0)).toMatchObject({
+      productId: 'prod-004',
+      quantity: 2,
+    })
+  })
+
+  it('shows an error toast for an unknown barcode', () => {
+    render(<POSScreen />)
+
+    scanCode('9999999999998')
+
+    expect(useCartStore.getState().items).toHaveLength(0)
+    expect(toastError).toHaveBeenCalledWith(
+      'Product not found for barcode 9999999999998'
+    )
+  })
+
+  it('refuses to scan out-of-stock products into the cart', () => {
+    render(<POSScreen />)
+
+    scanCode('6291041500213') // Espresso Beans 1kg (quantity 0)
+
+    expect(useCartStore.getState().items).toHaveLength(0)
+    expect(toastError).toHaveBeenCalledWith(
+      'Espresso Beans 1kg is out of stock'
+    )
+  })
+
+  it('does not fire scans while the sales-history tab is open', async () => {
+    const user = userEvent.setup()
+    render(<POSScreen />)
+
+    await user.click(screen.getByText('Sales History'))
+    scanCode('6291071500214')
+
+    expect(useCartStore.getState().items).toHaveLength(0)
+    expect(toastSuccess).not.toHaveBeenCalled()
   })
 })
