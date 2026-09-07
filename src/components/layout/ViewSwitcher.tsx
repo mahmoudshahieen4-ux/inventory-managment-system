@@ -1,9 +1,10 @@
-﻿import { Boxes, ShoppingCart, UsersRound } from 'lucide-react'
+﻿import { BarChart3, Boxes, ShoppingCart, UsersRound } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useUIStore } from '@/store/ui-store'
+import type { AppView } from '@/store/ui-store'
 
 /** Main navigation: centered tabs with an accent underline on the active view. */
 export function ViewSwitcher() {
@@ -18,9 +19,7 @@ export function ViewSwitcher() {
       <Tabs
         value={activeView}
         onValueChange={value =>
-          useUIStore
-            .getState()
-            .setActiveView(value as 'inventory' | 'pos' | 'payroll')
+          useUIStore.getState().setActiveView(value as AppView)
         }
       >
         <TabsList>
@@ -38,6 +37,12 @@ export function ViewSwitcher() {
             <TabsTrigger value="payroll" className="px-4">
               <UsersRound className="size-4" />
               {t('nav.payroll')}
+            </TabsTrigger>
+          )}
+          {isAdmin && (
+            <TabsTrigger value="analytics" className="px-4">
+              <BarChart3 className="size-4" />
+              {t('nav.analytics')}
             </TabsTrigger>
           )}
         </TabsList>

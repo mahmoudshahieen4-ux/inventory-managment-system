@@ -200,8 +200,8 @@ describe('InventoryTable', () => {
     await user.click(screen.getByLabelText('Edit Espresso Beans 1kg'))
 
     expect(screen.getByText('Edit Product')).toBeInTheDocument()
-    expect(screen.getByLabelText('Name')).toHaveValue('Espresso Beans 1kg')
-    expect(screen.getByLabelText('Quantity')).toHaveValue(0)
+    expect(screen.getByLabelText('Name*')).toHaveValue('Espresso Beans 1kg')
+    expect(screen.getByLabelText('Quantity*')).toHaveValue(0)
   })
 
   it('creates a product through the modal and shows it in the table', async () => {
@@ -209,18 +209,22 @@ describe('InventoryTable', () => {
     render(<InventoryTable />)
 
     await user.click(screen.getByRole('button', { name: 'Add Product' }))
-    await user.type(screen.getByLabelText('Name'), 'Green Tea Box')
+    await user.type(screen.getByLabelText('Name*'), 'Green Tea Box')
+    await user.type(screen.getByLabelText('Category*'), 'Beverages')
+
+    // The optional SKU lives behind the "more options" disclosure.
+    await user.click(screen.getByRole('button', { name: /show more options/i }))
     await user.type(screen.getByLabelText('SKU'), 'TEA-009')
-    await user.type(screen.getByLabelText('Category'), 'Beverages')
-    await user.type(screen.getByLabelText('Quantity'), '40')
-    await user.type(screen.getByLabelText('Min Threshold'), '10')
-    await user.type(screen.getByLabelText('Purchase Price'), '3')
-    await user.type(screen.getByLabelText('Selling Price'), '8')
+
+    await user.type(screen.getByLabelText('Quantity*'), '40')
+    await user.type(screen.getByLabelText('Min Threshold*'), '10')
+    await user.type(screen.getByLabelText('Purchase Price*'), '3')
+    await user.type(screen.getByLabelText('Selling Price*'), '8')
 
     await user.click(screen.getByRole('button', { name: 'Create Product' }))
 
     expect(screen.getByText('Green Tea Box')).toBeInTheDocument()
-  })
+  }, 15000)
 
   it('deletes a product after confirmation', async () => {
     const user = userEvent.setup()

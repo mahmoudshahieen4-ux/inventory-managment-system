@@ -15,6 +15,7 @@ import { SubscriptionBanner } from '@/components/license'
 import { InventoryView } from '@/components/inventory'
 import { PayrollView } from '@/components/payroll'
 import { POSScreen } from '@/components/pos'
+import { ProductAnalyticsPage } from '@/components/analytics'
 import { useAppBootstrap } from '@/services/bootstrap'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useLicenseStore } from '@/store/useLicenseStore'
@@ -61,7 +62,7 @@ export function MainWindowContent({
   return (
     <div
       className={cn(
-        'flex h-full min-h-screen w-full flex-1 flex-col overflow-x-hidden bg-background p-4',
+        'flex h-full min-h-0 min-w-0 w-full flex-1 flex-col overflow-x-hidden bg-background p-4',
         className
       )}
     >
@@ -100,6 +101,14 @@ export function MainWindowContent({
                       section="Payroll"
                     >
                       <PayrollView />
+                    </ErrorBoundary>
+                  ) : activeView === 'analytics' ? (
+                    <ErrorBoundary
+                      variant="section"
+                      resetKey={activeView}
+                      section="Analytics"
+                    >
+                      <ProductAnalyticsPage />
                     </ErrorBoundary>
                   ) : (
                     <ErrorBoundary

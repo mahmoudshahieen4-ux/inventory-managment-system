@@ -7,7 +7,7 @@ import type { UserRole } from '@/types/auth'
  * view (inventory, payroll) is admin-only.
  */
 const ROLE_ALLOWED_VIEWS: Record<UserRole, readonly AppView[]> = {
-  ADMIN: ['inventory', 'pos', 'payroll'],
+  ADMIN: ['inventory', 'pos', 'payroll', 'analytics'],
   CASHIER: ['pos'],
 }
 

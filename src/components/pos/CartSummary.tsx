@@ -13,6 +13,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import { useAutoSelectOnFocus } from '@/hooks/use-auto-select-on-focus'
 import { formatMoney } from '@/lib/money'
 import type { StockUpdate } from '@/services/db'
 import { useAuthStore } from '@/store/useAuthStore'
@@ -39,6 +40,8 @@ interface CartSummaryProps {
 /** Right POS pane: current sale lines, quantity controls, totals and checkout. */
 export function CartSummary({ onCheckoutComplete }: CartSummaryProps) {
   const { t } = useTranslation()
+  const { onFocus: onQtyFocus, onMouseUp: onMouseUpQty } =
+    useAutoSelectOnFocus()
 
   const products = useInventoryStore(state => state.products)
   const cartItems = useCartStore(state => state.items)
@@ -188,6 +191,8 @@ export function CartSummary({ onCheckoutComplete }: CartSummaryProps) {
                         value={item.quantity}
                         aria-label={t('pos.cart.quantity', { name: item.name })}
                         className="border-input bg-background text-foreground h-7 w-14 rounded-md border text-center text-sm font-medium outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+                        onFocus={onQtyFocus}
+                        onMouseUp={onMouseUpQty}
                         onChange={event =>
                           handleQuantityChange(item.productId, stock, event)
                         }

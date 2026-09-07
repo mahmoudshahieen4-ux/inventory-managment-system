@@ -24,6 +24,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { useAutoSelectOnFocus } from '@/hooks/use-auto-select-on-focus'
 import { isFutureDate, toDateKey } from '@/lib/payroll'
 import { usePayrollStore } from '@/store/usePayrollStore'
 import type {
@@ -53,6 +54,8 @@ function AttendanceRow({
   lockReason,
 }: AttendanceRowProps) {
   const { t } = useTranslation()
+  const { onFocus: onQtyFocus, onMouseUp: onMouseUpQty } =
+    useAutoSelectOnFocus()
   const recordAttendance = usePayrollStore(state => state.recordAttendance)
   const addAdvance = usePayrollStore(state => state.addAdvance)
   const [status, setStatus] = useState<AttendanceStatus>(
@@ -164,6 +167,8 @@ function AttendanceRow({
           dir="ltr"
           className="h-8 w-28 text-end"
           value={deduction}
+          onFocus={onQtyFocus}
+          onMouseUp={onMouseUpQty}
           onChange={event => setDeduction(event.target.value)}
           placeholder="0.00"
           disabled={locked}
@@ -182,6 +187,8 @@ function AttendanceRow({
             dir="ltr"
             className="h-8 w-28 text-end"
             value={advance}
+            onFocus={onQtyFocus}
+            onMouseUp={onMouseUpQty}
             onChange={event => setAdvance(event.target.value)}
             placeholder="0.00"
             disabled={locked}

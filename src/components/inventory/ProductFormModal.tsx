@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import type { ChangeEvent, FormEvent } from 'react'
+import type { ChangeEvent, FormEvent, ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Save, PackagePlus, Sparkles, Wand } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { CollapsibleSection } from '@/components/ui/collapsible'
 import {
   Dialog,
   DialogContent,
@@ -15,7 +16,9 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useAutoSelectOnFocus } from '@/hooks/use-auto-select-on-focus'
 import { generateBarcode } from '@/lib/barcode'
+import { cn } from '@/lib/utils'
 import { useInventoryStore } from '@/store/useInventoryStore'
 import type { NewProduct, Product } from '@/types/inventory'
 
@@ -96,6 +99,66 @@ function generateProductCode(): string {
   return `PRD-${crypto.randomUUID().slice(0, 8).toUpperCase()}`
 }
 
+/** Fields that live inside the collapsed "more options" section. */
+const OPTIONAL_ERROR_FIELDS = ['sku', 'barcode', 'unitsPerCarton'] as const
+
+/** ARIA props `FormField` hands to the wrapped control. */
+interface FieldControlProps {
+  id: string
+  'aria-invalid'?: true
+  'aria-describedby'?: string
+}
+
+interface FormFieldProps {
+  id: string
+  label: string
+  /** Validation message; rendered as an alert linked via aria-describedby. */
+  error?: string
+  required?: boolean
+  className?: string
+  /** Render prop receiving the ARIA props to spread onto the control. */
+  children: (controlProps: FieldControlProps) => ReactNode
+}
+
+/**
+ * Label + control + error message with the ARIA wiring done once: the control
+ * receives `aria-invalid`, the error alert is referenced through
+ * `aria-describedby`, and required fields get a visual/native indicator.
+ */
+function FormField({
+  id,
+  label,
+  error,
+  required,
+  className,
+  children,
+}: FormFieldProps) {
+  const describedBy = error ? `${id}-error` : undefined
+
+  return (
+    <div className={cn('grid gap-2', className)}>
+      <Label htmlFor={id}>
+        {label}
+        {required && (
+          <span aria-hidden="true" className="text-destructive">
+            *
+          </span>
+        )}
+      </Label>
+      {children({
+        id,
+        ...(error ? { 'aria-invalid': true as const } : {}),
+        ...(describedBy ? { 'aria-describedby': describedBy } : {}),
+      })}
+      {error && (
+        <p id={`${id}-error`} role="alert" className="text-destructive text-sm">
+          {error}
+        </p>
+      )}
+    </div>
+  )
+}
+
 function validate(
   values: ProductFormValues,
   t: Translate,
@@ -151,6 +214,8 @@ export function ProductFormModal({
   product = null,
 }: ProductFormModalProps) {
   const { t } = useTranslation()
+  const { onFocus: onQtyFocus, onMouseUp: onMouseUpQty } =
+    useAutoSelectOnFocus()
   const addProduct = useInventoryStore(state => state.addProduct)
   const updateProduct = useInventoryStore(state => state.updateProduct)
   const products = useInventoryStore(state => state.products)
@@ -158,6 +223,8 @@ export function ProductFormModal({
     product ? toFormValues(product) : EMPTY_VALUES
   )
   const [errors, setErrors] = useState<FormErrors>({})
+  // Optional fields are progressively disclosed: collapsed on open.
+  const [optionsOpen, setOptionsOpen] = useState(false)
 
   // Track the previous open/product combo and reset the form state whenever
   // the modal opens or the target product changes. Uses the React-recommended
@@ -173,6 +240,7 @@ export function ProductFormModal({
     setPrevProductState(product)
     setValues(product ? toFormValues(product) : EMPTY_VALUES)
     setErrors({})
+    setOptionsOpen(false)
   }
 
   const setField = (field: keyof ProductFormValues) => {
@@ -192,11 +260,24 @@ export function ProductFormModal({
     setErrors(current => ({ ...current, barcode: undefined }))
   }
 
+  // Number of optional fields that already hold a value, surfaced on the
+  // disclosure trigger so pre-filled data is visible at a glance.
+  const filledOptionalCount = [values.sku, values.barcode, values.unit].filter(
+    value => value.trim() !== ''
+  ).length
+
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
 
     const nextErrors = validate(values, t, products, product?.id)
     setErrors(nextErrors)
+
+    // Errors on fields inside the collapsed "more options" section would be
+    // invisible — expand it so the user can see and fix them.
+    if (OPTIONAL_ERROR_FIELDS.some(field => nextErrors[field])) {
+      setOptionsOpen(true)
+    }
+
     if (Object.keys(nextErrors).length > 0) return
 
     const payload: NewProduct = {
@@ -243,215 +324,236 @@ export function ProductFormModal({
         <form
           onSubmit={handleSubmit}
           noValidate
-          className="grid gap-4 sm:grid-cols-2"
+          className="grid gap-5 sm:grid-cols-2"
         >
-          <div className="grid gap-1.5">
-            <Label htmlFor="product-name">{t('inventory.form.name')}</Label>
-            <Input
-              id="product-name"
-              value={values.name}
-              onChange={setField('name')}
-              aria-invalid={errors.name ? true : undefined}
-            />
-            {errors.name && (
-              <p className="text-destructive text-sm" role="alert">
-                {errors.name}
-              </p>
-            )}
-          </div>
-
-          <div className="grid gap-1.5">
-            <Label htmlFor="product-sku">{t('inventory.form.sku')}</Label>
-            <div className="flex gap-2">
+          <FormField
+            id="product-name"
+            label={t('inventory.form.name')}
+            error={errors.name}
+            required
+          >
+            {controlProps => (
               <Input
-                id="product-sku"
-                value={values.sku}
-                onChange={setField('sku')}
-                placeholder={t('inventory.form.skuPlaceholder')}
-                className="min-w-0 flex-1"
-                aria-invalid={errors.sku ? true : undefined}
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="shrink-0"
-                onClick={handleGenerateSku}
-              >
-                <Sparkles className="size-4" />
-                {t('inventory.form.generateBarcode')}
-              </Button>
-            </div>
-            {errors.sku && (
-              <p className="text-destructive text-sm" role="alert">
-                {errors.sku}
-              </p>
-            )}
-          </div>
-
-          <div className="grid gap-1.5 sm:col-span-2">
-            <Label htmlFor="product-barcode">
-              {t('inventory.form.barcode')}
-            </Label>
-            <div className="flex gap-2">
-              <Input
-                id="product-barcode"
-                value={values.barcode}
-                onChange={setField('barcode')}
-                placeholder={t('inventory.form.barcodePlaceholder')}
+                {...controlProps}
+                required
+                value={values.name}
+                onChange={setField('name')}
                 autoFocus={!product}
-                className="min-w-0 flex-1"
-                aria-invalid={errors.barcode ? true : undefined}
               />
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="shrink-0"
-                onClick={handleGenerateBarcode}
-              >
-                <Wand className="size-4" />
-                {t('inventory.form.generateEan13')}
-              </Button>
-            </div>
-            {errors.barcode && (
-              <p className="text-destructive text-sm" role="alert">
-                {errors.barcode}
-              </p>
             )}
-          </div>
+          </FormField>
 
-          <div className="grid gap-1.5">
-            <Label htmlFor="product-category">
-              {t('inventory.form.category')}
-            </Label>
-            <Input
-              id="product-category"
-              value={values.category}
-              onChange={setField('category')}
-              aria-invalid={errors.category ? true : undefined}
-            />
-            {errors.category && (
-              <p className="text-destructive text-sm" role="alert">
-                {errors.category}
-              </p>
-            )}
-          </div>
-
-          <div className="grid gap-1.5">
-            <Label htmlFor="product-unit">{t('inventory.form.unit')}</Label>
-            <Input
-              id="product-unit"
-              list="product-unit-options"
-              value={values.unit}
-              onChange={setField('unit')}
-              placeholder={t('inventory.form.unitPlaceholder')}
-            />
-            <datalist id="product-unit-options">
-              <option value="علبة" />
-              <option value="كرتونة" />
-            </datalist>
-          </div>
-
-          {values.unit === 'كرتونة' && (
-            <div className="grid gap-1.5">
-              <Label htmlFor="product-units-per-carton">
-                {t('inventory.form.unitsPerCarton')}
-              </Label>
+          <FormField
+            id="product-category"
+            label={t('inventory.form.category')}
+            error={errors.category}
+            required
+          >
+            {controlProps => (
               <Input
-                id="product-units-per-carton"
-                type="number"
-                min={1}
-                step="1"
-                value={values.unitsPerCarton}
-                onChange={setField('unitsPerCarton')}
-                aria-invalid={errors.unitsPerCarton ? true : undefined}
+                {...controlProps}
+                required
+                value={values.category}
+                onChange={setField('category')}
               />
-              {errors.unitsPerCarton && (
-                <p className="text-destructive text-sm" role="alert">
-                  {errors.unitsPerCarton}
-                </p>
+            )}
+          </FormField>
+
+          <FormField
+            id="product-purchase-price"
+            label={t('inventory.form.purchasePrice')}
+            error={errors.purchasePrice}
+            required
+          >
+            {controlProps => (
+              <Input
+                {...controlProps}
+                required
+                type="text"
+                inputMode="decimal"
+                value={values.purchasePrice}
+                onChange={setField('purchasePrice')}
+              />
+            )}
+          </FormField>
+
+          <FormField
+            id="product-selling-price"
+            label={t('inventory.form.sellingPrice')}
+            error={errors.sellingPrice}
+            required
+          >
+            {controlProps => (
+              <Input
+                {...controlProps}
+                required
+                type="text"
+                inputMode="decimal"
+                value={values.sellingPrice}
+                onChange={setField('sellingPrice')}
+              />
+            )}
+          </FormField>
+
+          <FormField
+            id="product-quantity"
+            label={t('inventory.form.quantity')}
+            error={errors.quantity}
+            required
+          >
+            {controlProps => (
+              <Input
+                {...controlProps}
+                required
+                type="number"
+                min={0}
+                step="1"
+                value={values.quantity}
+                onFocus={onQtyFocus}
+                onMouseUp={onMouseUpQty}
+                onChange={setField('quantity')}
+              />
+            )}
+          </FormField>
+
+          <FormField
+            id="product-min-threshold"
+            label={t('inventory.form.minThreshold')}
+            error={errors.minThreshold}
+            required
+          >
+            {controlProps => (
+              <Input
+                {...controlProps}
+                required
+                type="number"
+                min={0}
+                step="1"
+                value={values.minThreshold}
+                onFocus={onQtyFocus}
+                onMouseUp={onMouseUpQty}
+                onChange={setField('minThreshold')}
+              />
+            )}
+          </FormField>
+
+          <CollapsibleSection
+            className="border-t pt-1 sm:col-span-2"
+            open={optionsOpen}
+            onOpenChange={setOptionsOpen}
+            title={
+              optionsOpen
+                ? t('inventory.form.options.hide')
+                : t('inventory.form.options.show')
+            }
+            trailing={
+              filledOptionalCount > 0 ? (
+                <span className="bg-primary/10 text-primary inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium tabular-nums">
+                  <span aria-hidden="true">{filledOptionalCount}</span>
+                  <span className="sr-only">
+                    {t('inventory.form.options.filled', {
+                      filled: filledOptionalCount,
+                    })}
+                  </span>
+                </span>
+              ) : undefined
+            }
+          >
+            <div className="grid gap-5 pt-4 sm:grid-cols-2">
+              <FormField
+                id="product-sku"
+                label={t('inventory.form.sku')}
+                error={errors.sku}
+              >
+                {controlProps => (
+                  <div className="flex gap-2">
+                    <Input
+                      {...controlProps}
+                      value={values.sku}
+                      onChange={setField('sku')}
+                      placeholder={t('inventory.form.skuPlaceholder')}
+                      className="min-w-0 flex-1"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0"
+                      onClick={handleGenerateSku}
+                    >
+                      <Sparkles className="size-4" />
+                      {t('inventory.form.generateBarcode')}
+                    </Button>
+                  </div>
+                )}
+              </FormField>
+
+              <FormField
+                id="product-barcode"
+                label={t('inventory.form.barcode')}
+                error={errors.barcode}
+              >
+                {controlProps => (
+                  <div className="flex gap-2">
+                    <Input
+                      {...controlProps}
+                      value={values.barcode}
+                      onChange={setField('barcode')}
+                      placeholder={t('inventory.form.barcodePlaceholder')}
+                      className="min-w-0 flex-1"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0"
+                      onClick={handleGenerateBarcode}
+                    >
+                      <Wand className="size-4" />
+                      {t('inventory.form.generateEan13')}
+                    </Button>
+                  </div>
+                )}
+              </FormField>
+
+              <FormField id="product-unit" label={t('inventory.form.unit')}>
+                {controlProps => (
+                  <Input
+                    {...controlProps}
+                    list="product-unit-options"
+                    value={values.unit}
+                    onChange={setField('unit')}
+                    placeholder={t('inventory.form.unitPlaceholder')}
+                  />
+                )}
+              </FormField>
+              <datalist id="product-unit-options">
+                <option value="علبة" />
+                <option value="كرتونة" />
+              </datalist>
+
+              {values.unit === 'كرتونة' && (
+                <FormField
+                  id="product-units-per-carton"
+                  label={t('inventory.form.unitsPerCarton')}
+                  error={errors.unitsPerCarton}
+                >
+                  {controlProps => (
+                    <Input
+                      {...controlProps}
+                      type="number"
+                      min={1}
+                      step="1"
+                      value={values.unitsPerCarton}
+                      onFocus={onQtyFocus}
+                      onMouseUp={onMouseUpQty}
+                      onChange={setField('unitsPerCarton')}
+                    />
+                  )}
+                </FormField>
               )}
             </div>
-          )}
-
-          <div className="grid gap-1.5">
-            <Label htmlFor="product-purchase-price">
-              {t('inventory.form.purchasePrice')}
-            </Label>
-            <Input
-              id="product-purchase-price"
-              type="text"
-              inputMode="decimal"
-              value={values.purchasePrice}
-              onChange={setField('purchasePrice')}
-              aria-invalid={errors.purchasePrice ? true : undefined}
-            />
-            {errors.purchasePrice && (
-              <p className="text-destructive text-sm" role="alert">
-                {errors.purchasePrice}
-              </p>
-            )}
-          </div>
-
-          <div className="grid gap-1.5">
-            <Label htmlFor="product-selling-price">
-              {t('inventory.form.sellingPrice')}
-            </Label>
-            <Input
-              id="product-selling-price"
-              type="text"
-              inputMode="decimal"
-              value={values.sellingPrice}
-              onChange={setField('sellingPrice')}
-              aria-invalid={errors.sellingPrice ? true : undefined}
-            />
-            {errors.sellingPrice && (
-              <p className="text-destructive text-sm" role="alert">
-                {errors.sellingPrice}
-              </p>
-            )}
-          </div>
-
-          <div className="grid gap-1.5">
-            <Label htmlFor="product-quantity">
-              {t('inventory.form.quantity')}
-            </Label>
-            <Input
-              id="product-quantity"
-              type="number"
-              min={0}
-              step="1"
-              value={values.quantity}
-              onChange={setField('quantity')}
-              aria-invalid={errors.quantity ? true : undefined}
-            />
-            {errors.quantity && (
-              <p className="text-destructive text-sm" role="alert">
-                {errors.quantity}
-              </p>
-            )}
-          </div>
-
-          <div className="grid gap-1.5">
-            <Label htmlFor="product-min-threshold">
-              {t('inventory.form.minThreshold')}
-            </Label>
-            <Input
-              id="product-min-threshold"
-              type="number"
-              min={0}
-              step="1"
-              value={values.minThreshold}
-              onChange={setField('minThreshold')}
-              aria-invalid={errors.minThreshold ? true : undefined}
-            />
-            {errors.minThreshold && (
-              <p className="text-destructive text-sm" role="alert">
-                {errors.minThreshold}
-              </p>
-            )}
-          </div>
+          </CollapsibleSection>
 
           <DialogFooter className="mt-2 sm:col-span-2">
             <Button

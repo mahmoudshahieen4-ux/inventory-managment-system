@@ -61,7 +61,21 @@ body {
   * {
     @apply border-border outline-ring/50;
     box-sizing: border-box;
+    min-width: 0;
     cursor: default;
+  }
+
+  /* Keep long labels, translated strings, and user-entered values inside their containers. */
+  :where(p, h1, h2, h3, h4, h5, h6, label, td, th, button, a, span) {
+    overflow-wrap: break-word;
+    hyphens: auto;
+  }
+
+  img,
+  video,
+  canvas,
+  svg {
+    max-width: 100%;
   }
 
   body {

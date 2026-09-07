@@ -95,6 +95,26 @@ Event-Driven Bridge
 | Internationalization | [i18n-patterns.md](./i18n-patterns.md)           |
 | Cross-Platform       | [cross-platform.md](./cross-platform.md)         |
 
+## Collapsible Form Sections (a11y)
+
+`src/components/ui/collapsible.tsx` implements the WAI-ARIA **disclosure**
+pattern with zero dependencies. Use it for progressive disclosure of optional
+form fields (see `ProductFormModal`):
+
+- The trigger exposes `aria-expanded` / `aria-controls`; the content is a
+  `region` labelled by the trigger.
+- Collapsed content is `inert` — invisible, untabbable, and hidden from
+  assistive tech — while a CSS `grid-template-rows` transition animates the
+  section open/closed in both directions.
+- All animations respect `prefers-reduced-motion`.
+- If a collapsed field can fail validation, expand the section on submit so
+  errors are never hidden (see `ProductFormModal.handleSubmit`).
+
+Pair it with the local `FormField` helper (label + control + `role="alert"`
+error message wired through `aria-invalid` / `aria-describedby`) instead of
+hand-rolling label/error markup for every field. Required fields get a visual
+`*` plus the native `required` attribute.
+
 ## Component Hierarchy
 
 ```

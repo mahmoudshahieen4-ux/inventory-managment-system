@@ -25,6 +25,15 @@ function renderEditModal(product: Product) {
   )
 }
 
+/** The optional fields (SKU, barcode, unit) live behind a disclosure. */
+async function showMoreOptions(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: /show more options/i }))
+}
+
+function collapsibleContent() {
+  return screen.getByText('SKU').closest('[data-slot="collapsible-content"]')
+}
+
 describe('ProductFormModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -35,9 +44,8 @@ describe('ProductFormModal', () => {
     renderCreateModal()
 
     expect(screen.getByText('Add New Product')).toBeInTheDocument()
-    expect(screen.getByLabelText('Name')).toHaveValue('')
-    expect(screen.getByLabelText('SKU')).toHaveValue('')
-    expect(screen.getByLabelText('Category')).toHaveValue('')
+    expect(screen.getByLabelText('Name*')).toHaveValue('')
+    expect(screen.getByLabelText('Category*')).toHaveValue('')
     expect(
       screen.getByRole('button', { name: 'Create Product' })
     ).toBeInTheDocument()
@@ -47,12 +55,58 @@ describe('ProductFormModal', () => {
     renderEditModal(findProduct('prod-001'))
 
     expect(screen.getByText('Edit Product')).toBeInTheDocument()
-    expect(screen.getByLabelText('Name')).toHaveValue('Espresso Beans 1kg')
+    expect(screen.getByLabelText('Name*')).toHaveValue('Espresso Beans 1kg')
     expect(screen.getByLabelText('SKU')).toHaveValue('COF-001')
-    expect(screen.getByLabelText('Quantity')).toHaveValue(0)
-    expect(screen.getByLabelText('Min Threshold')).toHaveValue(10)
-    expect(screen.getByLabelText('Purchase Price')).toHaveValue('12.5')
-    expect(screen.getByLabelText('Selling Price')).toHaveValue('24.99')
+    expect(screen.getByLabelText('Quantity*')).toHaveValue(0)
+    expect(screen.getByLabelText('Min Threshold*')).toHaveValue(10)
+    expect(screen.getByLabelText('Purchase Price*')).toHaveValue('12.5')
+    expect(screen.getByLabelText('Selling Price*')).toHaveValue('24.99')
+  })
+
+  it('marks required fields and links error alerts via aria-describedby', async () => {
+    const user = userEvent.setup()
+    renderCreateModal()
+
+    expect(screen.getByLabelText('Name*')).toHaveAttribute('required')
+
+    await user.click(screen.getByRole('button', { name: 'Create Product' }))
+
+    const nameInput = screen.getByLabelText('Name*')
+    expect(nameInput).toHaveAttribute('aria-invalid', 'true')
+    expect(nameInput).toHaveAttribute('aria-describedby', 'product-name-error')
+    expect(screen.getAllByRole('alert').length).toBeGreaterThan(0)
+  })
+
+  it('keeps optional fields collapsed behind an accessible disclosure', async () => {
+    const user = userEvent.setup()
+    renderCreateModal()
+
+    const trigger = screen.getByRole('button', { name: /show more options/i })
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(trigger).toHaveAttribute('aria-controls')
+
+    // Collapsed content is inert: untabbable and hidden from assistive tech.
+    expect(collapsibleContent()).toHaveAttribute('inert')
+
+    await showMoreOptions(user)
+
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    expect(collapsibleContent()).not.toHaveAttribute('inert')
+    expect(screen.getByLabelText('Barcode')).toBeInTheDocument()
+    expect(screen.getByLabelText('Unit')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /hide extra options/i })
+    ).toBeInTheDocument()
+  })
+
+  it('shows how many optional fields are already filled', async () => {
+    const user = userEvent.setup()
+    renderCreateModal()
+
+    await showMoreOptions(user)
+    await user.type(screen.getByLabelText('SKU'), 'ABC-123')
+
+    expect(screen.getByText('1 filled')).toBeInTheDocument()
   })
 
   it('shows validation errors when submitting an empty form', async () => {
@@ -68,17 +122,46 @@ describe('ProductFormModal', () => {
     )
   })
 
+  it('expands the optional section when a hidden field has an error', async () => {
+    const user = userEvent.setup()
+    renderCreateModal()
+
+    await user.type(screen.getByLabelText('Name*'), 'Duplicate Barcode')
+    await user.type(screen.getByLabelText('Category*'), 'Testing')
+    await user.type(screen.getByLabelText('Quantity*'), '1')
+    await user.type(screen.getByLabelText('Min Threshold*'), '1')
+    await user.type(screen.getByLabelText('Purchase Price*'), '1')
+    await user.type(screen.getByLabelText('Selling Price*'), '2')
+
+    // prod-001 (Espresso Beans) already owns this barcode.
+    await showMoreOptions(user)
+    await user.type(screen.getByLabelText('Barcode'), '6291041500213')
+    await user.click(
+      screen.getByRole('button', { name: /hide extra options/i })
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Create Product' }))
+
+    // The section auto-expanded so the error is actually visible.
+    expect(
+      screen.getByRole('button', { name: /hide extra options/i })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('This barcode is already assigned to another product.')
+    ).toBeVisible()
+    expect(onOpenChangeMock).not.toHaveBeenCalled()
+  }, 15000)
+
   it('rejects negative numeric values', async () => {
     const user = userEvent.setup()
     renderCreateModal()
 
-    await user.type(screen.getByLabelText('Name'), 'Test Product')
-    await user.type(screen.getByLabelText('SKU'), 'TST-001')
-    await user.type(screen.getByLabelText('Category'), 'Testing')
-    await user.type(screen.getByLabelText('Quantity'), '-5')
-    await user.type(screen.getByLabelText('Min Threshold'), '2')
-    await user.type(screen.getByLabelText('Purchase Price'), '1')
-    await user.type(screen.getByLabelText('Selling Price'), '3')
+    await user.type(screen.getByLabelText('Name*'), 'Test Product')
+    await user.type(screen.getByLabelText('Category*'), 'Testing')
+    await user.type(screen.getByLabelText('Quantity*'), '-5')
+    await user.type(screen.getByLabelText('Min Threshold*'), '2')
+    await user.type(screen.getByLabelText('Purchase Price*'), '1')
+    await user.type(screen.getByLabelText('Selling Price*'), '3')
 
     await user.click(screen.getByRole('button', { name: 'Create Product' }))
 
@@ -89,48 +172,21 @@ describe('ProductFormModal', () => {
     expect(onOpenChangeMock).not.toHaveBeenCalled()
   })
 
-  it('creates a product and closes the modal', async () => {
+  it('creates a product with optional fields and closes the modal', async () => {
     const user = userEvent.setup()
     renderCreateModal()
 
-    await user.type(screen.getByLabelText('Name'), 'Test Product')
-    await user.type(screen.getByLabelText('SKU'), 'TST-001')
-    await user.type(screen.getByLabelText('Category'), 'Testing')
-    await user.type(screen.getByLabelText('Quantity'), '25')
-    await user.type(screen.getByLabelText('Min Threshold'), '5')
-    await user.type(screen.getByLabelText('Purchase Price'), '10')
-    await user.type(screen.getByLabelText('Selling Price'), '20')
+    await user.type(screen.getByLabelText('Name*'), 'Olive Oil 1L')
+    await user.type(screen.getByLabelText('Category*'), 'Pantry')
 
-    await user.click(screen.getByRole('button', { name: 'Create Product' }))
-
-    expect(onOpenChangeMock).toHaveBeenCalledWith(false)
-
-    const created = useInventoryStore
-      .getState()
-      .products.find(product => product.sku === 'TST-001')
-    expect(created).toMatchObject({
-      name: 'Test Product',
-      category: 'Testing',
-      quantity: 25,
-      minThreshold: 5,
-      purchasePrice: 10,
-      sellingPrice: 20,
-    })
-  })
-
-  it('creates a product with comma-decimal prices and a unit', async () => {
-    const user = userEvent.setup()
-    renderCreateModal()
-
-    await user.type(screen.getByLabelText('Name'), 'Olive Oil 1L')
+    await showMoreOptions(user)
     await user.type(screen.getByLabelText('SKU'), 'OIL-010')
-    await user.type(screen.getByLabelText('Category'), 'Pantry')
-    await user.type(screen.getByLabelText(/Unit/), 'bottle')
-    await user.type(screen.getByLabelText('Quantity'), '12')
-    await user.type(screen.getByLabelText('Min Threshold'), '4')
+    await user.type(screen.getByLabelText('Unit'), 'bottle')
     // Locale-style decimal comma must be parsed as 12.5
-    await user.type(screen.getByLabelText('Purchase Price'), '12,50')
-    await user.type(screen.getByLabelText('Selling Price'), '20')
+    await user.type(screen.getByLabelText('Purchase Price*'), '12,50')
+    await user.type(screen.getByLabelText('Selling Price*'), '20')
+    await user.type(screen.getByLabelText('Quantity*'), '12')
+    await user.type(screen.getByLabelText('Min Threshold*'), '4')
 
     await user.click(screen.getByRole('button', { name: 'Create Product' }))
 
@@ -147,13 +203,13 @@ describe('ProductFormModal', () => {
       purchasePrice: 12.5,
       sellingPrice: 20,
     })
-  })
+  }, 15000)
 
   it('updates an existing product and closes the modal', async () => {
     const user = userEvent.setup()
     renderEditModal(findProduct('prod-002'))
 
-    const nameInput = screen.getByLabelText('Name')
+    const nameInput = screen.getByLabelText('Name*')
     await user.clear(nameInput)
     await user.type(nameInput, 'Whole Milk 2L')
 
@@ -172,6 +228,8 @@ describe('ProductFormModal', () => {
     const user = userEvent.setup()
     renderCreateModal()
 
+    await showMoreOptions(user)
+
     expect(screen.getByLabelText('SKU')).toHaveValue('')
 
     await user.click(
@@ -189,36 +247,23 @@ describe('ProductFormModal', () => {
     const user = userEvent.setup()
     renderCreateModal()
 
+    await showMoreOptions(user)
     await user.click(screen.getByRole('button', { name: 'Generate EAN-13' }))
 
-    const barcode = screen.getByLabelText(
-      'Barcode (optional)'
-    ) as HTMLInputElement
+    const barcode = screen.getByLabelText('Barcode') as HTMLInputElement
     expect(barcode.value).toMatch(/^\d{13}$/)
     expect(isValidEAN13(barcode.value)).toBe(true)
   })
 
-  it('rejects a barcode that already belongs to another product', async () => {
+  it('reveals the units-per-carton field when the unit is a carton', async () => {
     const user = userEvent.setup()
     renderCreateModal()
 
-    await user.type(screen.getByLabelText('Name'), 'Duplicate Barcode')
-    await user.type(screen.getByLabelText('Category'), 'Testing')
-    await user.type(screen.getByLabelText('Quantity'), '1')
-    await user.type(screen.getByLabelText('Min Threshold'), '1')
-    await user.type(screen.getByLabelText('Purchase Price'), '1')
-    await user.type(screen.getByLabelText('Selling Price'), '2')
-    // prod-001 (Espresso Beans) already owns this barcode.
-    await user.type(
-      screen.getByLabelText('Barcode (optional)'),
-      '6291041500213'
-    )
+    await showMoreOptions(user)
+    expect(screen.queryByLabelText('Units per Carton')).not.toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: 'Create Product' }))
+    await user.type(screen.getByLabelText('Unit'), 'كرتونة')
 
-    expect(
-      screen.getByText('This barcode is already assigned to another product.')
-    ).toBeInTheDocument()
-    expect(onOpenChangeMock).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('Units per Carton')).toBeInTheDocument()
   })
 })

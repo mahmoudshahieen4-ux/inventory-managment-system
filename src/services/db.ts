@@ -16,6 +16,14 @@ import type {
   Worker,
 } from '@/types/payroll'
 import type { CreditNote, Sale, SaleItem } from '@/types/sales'
+import type {
+  AnalyticsData,
+  AnalyticsSummary,
+  DeadStockItem,
+  HighestMarginItem,
+  ProductAnalyticsItem,
+  TimeRange,
+} from '@/types/analytics'
 
 /** True only inside the Tauri desktop webview. */
 export function isTauriRuntime(): boolean {
@@ -1036,4 +1044,229 @@ export async function updateAuthUserPassword(
     'UPDATE auth_users SET password_hash = $1, updated_at = $2 WHERE id = $3',
     [passwordHash, new Date().toISOString(), id]
   )
+}
+
+/* ------------------------------------------------------------------ */
+/* Analytics — product performance & dead-stock reports                */
+/* ------------------------------------------------------------------ */
+
+/** Maps a TimeRange to the number of days used in the SQL date filter. */
+function rangeToDays(range: TimeRange): number {
+  switch (range) {
+    case '1_MONTH':
+      return 30
+    case '3_MONTHS':
+      return 90
+    case '6_MONTHS':
+      return 180
+  }
+}
+
+/** Returns the ISO timestamp for `days` ago (used as the WHERE filter). */
+function cutoffIso(days: number): string {
+  const date = new Date()
+  date.setDate(date.getDate() - days)
+  return date.toISOString()
+}
+
+/**
+ * يجلب بيانات تحليلات المنتجات المجمعة من جدول المبيعات خلال فترة زمنية محددة.
+ *
+ * يعرض لكل منتج: الكمية المباعة، الإجمالي، الأرباح، وهامش الربح.
+ * يُرجع بيانات فارغة عند عدم التشغيل داخل بيئة تاوري (وضع المتصفح).
+ */
+export async function fetchProductAnalytics(
+  range: TimeRange
+): Promise<ProductAnalyticsItem[]> {
+  if (!isTauriRuntime()) return []
+  const db = await getDb()
+  const cutoff = cutoffIso(rangeToDays(range))
+  const rows = await db.select<Record<string, unknown>[]>(
+    `SELECT
+       si.product_id AS productId,
+       si.product_name AS productName,
+       SUM(si.quantity) AS totalQuantitySold,
+       SUM(si.total_price) AS totalRevenue,
+       SUM(si.profit) AS totalProfit,
+       ROUND(
+         (SUM(si.profit) / NULLIF(SUM(si.total_price), 0)) * 100,
+         1
+       ) AS profitMargin
+     FROM sale_items si
+     JOIN sales s ON s.id = si.sale_id
+     WHERE s.created_at >= $1
+     GROUP BY si.product_id, si.product_name
+     ORDER BY totalProfit DESC`,
+    [cutoff]
+  )
+  return rows.map(row => ({
+    productId: String(row.productId),
+    productName: String(row.productName),
+    totalQuantitySold: Number(row.totalQuantitySold) || 0,
+    totalRevenue: Number(row.totalRevenue) || 0,
+    totalProfit: Number(row.totalProfit) || 0,
+    profitMargin: Number(row.profitMargin) || 0,
+  }))
+}
+
+/**
+ * يجلب المنتجات الراكدة وبطيئة الحركة مع رأس المال المجمّد.
+ *
+ * يعرض المنتجات التي لم تُباع أو بيعت بكميات قليلة جداً خلال الفترة،
+ * مع حساب رأس المال المجمّد (الكمية × سعر الشراء) لمساعدة المدير
+ * في اتخاذ قرار تصفية المخزون.
+ */
+export async function fetchDeadStockAnalytics(
+  range: TimeRange
+): Promise<DeadStockItem[]> {
+  if (!isTauriRuntime()) return []
+  const db = await getDb()
+  const cutoff = cutoffIso(rangeToDays(range))
+  const rows = await db.select<Record<string, unknown>[]>(
+    `SELECT
+       p.id AS productId,
+       p.name AS productName,
+       p.sku AS sku,
+       p.category AS category,
+       p.quantity AS quantity,
+       p.purchase_price AS purchasePrice,
+       ROUND(p.quantity * p.purchase_price, 2) AS tiedUpCapital,
+       COALESCE(sales_agg.total_sold, 0) AS quantitySold
+     FROM products p
+     LEFT JOIN (
+       SELECT si.product_id, SUM(si.quantity) AS total_sold
+       FROM sale_items si
+       JOIN sales s ON s.id = si.sale_id
+       WHERE s.created_at >= $1
+       GROUP BY si.product_id
+     ) sales_agg ON sales_agg.product_id = p.id
+     WHERE COALESCE(sales_agg.total_sold, 0) < 3
+     ORDER BY tiedUpCapital DESC`,
+    [cutoff]
+  )
+  return rows.map(row => ({
+    productId: String(row.productId),
+    productName: String(row.productName),
+    sku: String(row.sku),
+    category: String(row.category),
+    quantity: Number(row.quantity) || 0,
+    purchasePrice: Number(row.purchasePrice) || 0,
+    tiedUpCapital: Number(row.tiedUpCapital) || 0,
+    quantitySold: Number(row.quantitySold) || 0,
+  }))
+}
+
+/**
+ * يجلب المنتجات مرتبة حسب أعلى هامش ربح بالنسبة المئوية.
+ *
+ * يحسب الهامش: ((سعر البيع - سعر الشراء) / سعر البيع) × 100
+ */
+export async function fetchHighestMarginProducts(): Promise<
+  HighestMarginItem[]
+> {
+  if (!isTauriRuntime()) return []
+  const db = await getDb()
+  const rows = await db.select<Record<string, unknown>[]>(
+    `SELECT
+       p.id AS productId,
+       p.name AS productName,
+       p.sku AS sku,
+       p.category AS category,
+       p.purchase_price AS purchasePrice,
+       p.selling_price AS sellingPrice,
+       ROUND(
+         ((p.selling_price - p.purchase_price) / NULLIF(p.selling_price, 0)) * 100,
+         1
+       ) AS profitMarginPercent
+     FROM products p
+     WHERE p.selling_price > 0
+     ORDER BY profitMarginPercent DESC
+     LIMIT 20`
+  )
+  return rows.map(row => ({
+    productId: String(row.productId),
+    productName: String(row.productName),
+    sku: String(row.sku),
+    category: String(row.category),
+    purchasePrice: Number(row.purchasePrice) || 0,
+    sellingPrice: Number(row.sellingPrice) || 0,
+    profitMarginPercent: Number(row.profitMarginPercent) || 0,
+  }))
+}
+
+/**
+ * يجلب ملخص المؤشرات الرئيسية (KPIs) للوحة التحليلات.
+ *
+ * يشمل: إجمالي القطع المباعة، الإيرادات، الأرباح، وقيمة الرواكد.
+ */
+export async function fetchAnalyticsSummary(
+  range: TimeRange
+): Promise<AnalyticsSummary> {
+  if (!isTauriRuntime()) {
+    return {
+      totalUnitsSold: 0,
+      totalRevenue: 0,
+      totalProfit: 0,
+      deadStockValue: 0,
+    }
+  }
+  const db = await getDb()
+  const cutoff = cutoffIso(rangeToDays(range))
+
+  const salesRow = await db.select<Record<string, unknown>[]>(
+    `SELECT
+       COALESCE(SUM(si.quantity), 0) AS totalUnitsSold,
+       COALESCE(SUM(si.total_price), 0) AS totalRevenue,
+       COALESCE(SUM(si.profit), 0) AS totalProfit
+     FROM sale_items si
+     JOIN sales s ON s.id = si.sale_id
+     WHERE s.created_at >= $1`,
+    [cutoff]
+  )
+
+  const deadStockRow = await db.select<Record<string, unknown>[]>(
+    `SELECT COALESCE(SUM(p.quantity * p.purchase_price), 0) AS deadStockValue
+     FROM products p
+     LEFT JOIN (
+       SELECT si.product_id, SUM(si.quantity) AS total_sold
+       FROM sale_items si
+       JOIN sales s ON s.id = si.sale_id
+       WHERE s.created_at >= $1
+       GROUP BY si.product_id
+     ) sales_agg ON sales_agg.product_id = p.id
+     WHERE COALESCE(sales_agg.total_sold, 0) < 3`,
+    [cutoff]
+  )
+
+  return {
+    totalUnitsSold: Number(salesRow[0]?.totalUnitsSold) || 0,
+    totalRevenue: Number(salesRow[0]?.totalRevenue) || 0,
+    totalProfit: Number(salesRow[0]?.totalProfit) || 0,
+    deadStockValue: Number(deadStockRow[0]?.deadStockValue) || 0,
+  }
+}
+
+/**
+ * يجلب جميع بيانات التحليلات في استدعاء واحد متوازي.
+ *
+ * يُستخدم من قبل لوحة التحميل لتحميل كل البيانات دفعة واحدة
+ * مع إمكانية التخزين المؤقت عبر TanStack Query.
+ */
+export async function fetchFullAnalytics(
+  range: TimeRange
+): Promise<AnalyticsData> {
+  const [summary, productPerformance, deadStock, highestMargins] =
+    await Promise.all([
+      fetchAnalyticsSummary(range),
+      fetchProductAnalytics(range),
+      fetchDeadStockAnalytics(range),
+      fetchHighestMarginProducts(),
+    ])
+
+  return {
+    summary,
+    productPerformance,
+    deadStock,
+    highestMargins,
+  }
 }

@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { useAutoSelectOnFocus } from '@/hooks/use-auto-select-on-focus'
 import { roundMoney } from '@/lib/money'
 import { useInventoryStore } from '@/store/useInventoryStore'
 import { useSalesStore } from '@/store/useSalesStore'
@@ -32,6 +33,8 @@ export function ReturnModal({
   onComplete,
 }: ReturnModalProps) {
   const { t } = useTranslation()
+  const { onFocus: onQtyFocus, onMouseUp: onMouseUpQty } =
+    useAutoSelectOnFocus()
   const returnedQuantity = useSalesStore(state => state.returnedQuantity)
   const [quantities, setQuantities] = useState<Record<string, number>>({})
 
@@ -115,6 +118,8 @@ export function ReturnModal({
                   max={max}
                   disabled={max === 0}
                   value={quantities[item.productId] ?? 0}
+                  onFocus={onQtyFocus}
+                  onMouseUp={onMouseUpQty}
                   onChange={event =>
                     setQuantities(current => ({
                       ...current,
