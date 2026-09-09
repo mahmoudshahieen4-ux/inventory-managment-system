@@ -10,6 +10,7 @@ import {
   Plus,
   Search,
   Trash2,
+  Truck,
 } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
@@ -45,6 +46,7 @@ import { useAuthStore } from '@/store/useAuthStore'
 import { useInventoryStore } from '@/store/useInventoryStore'
 import type { Product, StockStatus } from '@/types/inventory'
 import { ProductFormModal } from './ProductFormModal'
+import { StockInModal } from './StockInModal'
 import { stockStatusStyles } from './stock-status-config'
 
 type StockFilter = StockStatus | 'ALL' | 'LOW_AND_OUT'
@@ -87,6 +89,8 @@ export function InventoryTable() {
   const [filter, setFilter] = useState<StockFilter>('ALL')
   const [modalOpen, setModalOpen] = useState(false)
   const [editingProduct, setEditingProduct] = useState<Product | null>(null)
+  const [stockInOpen, setStockInOpen] = useState(false)
+  const [stockInProduct, setStockInProduct] = useState<Product | null>(null)
   const [sort, setSort] = useState<SortState | null>(null)
 
   const normalizedSearch = search.trim().toLowerCase()
@@ -135,6 +139,11 @@ export function InventoryTable() {
   const handleOpenChange = (open: boolean) => {
     setModalOpen(open)
     if (!open) setEditingProduct(null)
+  }
+
+  const handleOpenAddStock = (product: Product | null) => {
+    setStockInProduct(product)
+    setStockInOpen(true)
   }
 
   const handleDelete = (product: Product) => {
@@ -189,10 +198,18 @@ export function InventoryTable() {
         </CardTitle>
         <CardDescription>{t('inventory.description')}</CardDescription>
         {isAdmin && (
-          <CardAction>
+          <CardAction className="gap-2">
             <Button onClick={handleOpenCreate}>
               <Plus />
               {t('inventory.addProduct')}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => handleOpenAddStock(null)}
+              aria-label={t('inventory.stockIn.button')}
+            >
+              <Truck />
+              {t('inventory.stockIn.button')}
             </Button>
           </CardAction>
         )}
@@ -348,6 +365,20 @@ export function InventoryTable() {
                           <Button
                             variant="ghost"
                             size="icon-sm"
+                            className="text-muted-foreground hover:text-green-600"
+                            aria-label={t('inventory.actions.addStock', {
+                              name: product.name,
+                            })}
+                            title={t('inventory.actions.addStock', {
+                              name: product.name,
+                            })}
+                            onClick={() => handleOpenAddStock(product)}
+                          >
+                            <Truck />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
                             className="text-muted-foreground hover:text-foreground"
                             aria-label={t('inventory.actions.edit', {
                               name: product.name,
@@ -402,6 +433,16 @@ export function InventoryTable() {
           open={modalOpen}
           onOpenChange={handleOpenChange}
           product={editingProduct}
+        />
+
+        {/* Add stock (stock-in / purchase invoice): admin-only. */}
+        <StockInModal
+          open={stockInOpen}
+          onOpenChange={open => {
+            setStockInOpen(open)
+            if (!open) setStockInProduct(null)
+          }}
+          product={stockInProduct}
         />
       </CardContent>
     </Card>

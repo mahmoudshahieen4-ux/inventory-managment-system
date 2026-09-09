@@ -1,2 +1,2 @@
 allowBuilds:
-  '@ast-grep/cli': set this to true or false
+  '@ast-grep/cli': true

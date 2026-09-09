@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "نظام نقاط البيع والمخازن",
+  "productName": "inventory-pos-system",
   "version": "1.0.0",
   "identifier": "com.egyptpos.store",
   "build": {
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "نظام إدارة المبيعات والمخازن",
+        "title": "inventory-pos-system",
         "width": 1600,
         "height": 950,
         "minWidth": 1200,
@@ -37,7 +37,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -45,7 +45,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "publisher": "اسم شركتك أو اسمك",
+    "publisher": "Egypt POS Store",
     "category": "Business",
     "shortDescription": "برنامج إدارة المبيعات والمخازن والحسابات",
     "longDescription": "نظام محلي لإدارة أجهزة نقاط البيع، المبيعات، حساب الأرباح، وحركة المخزون مع دعم كامل للعملة المصرية والتشفير.",
@@ -63,9 +63,5 @@
       }
     }
   },
-  "plugins": {
-    "updater": {
-      "active": false
-    }
-  }
+  "plugins": {}
 }

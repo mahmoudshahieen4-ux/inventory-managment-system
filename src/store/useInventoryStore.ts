@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 
 import i18n from '@/i18n/config'
 import {
+  addStockToProduct,
   deleteProductRow,
   fetchProducts,
   initializeDatabase,
@@ -11,6 +12,7 @@ import {
   isTauriRuntime,
   updateProductRow,
 } from '@/services/db'
+import { useAuthStore } from '@/store/useAuthStore'
 import type { StockUpdate } from '@/services/db'
 import type { NewProduct, Product } from '@/types/inventory'
 
@@ -95,6 +97,20 @@ interface InventoryState {
   products: Product[]
   addProduct: (product: NewProduct) => Product
   updateProduct: (id: string, updates: Partial<NewProduct>) => void
+  /**
+   * Increases a product's on-hand quantity by `addedQuantity` (e.g. a received
+   * shipment / purchase invoice) and optionally updates its purchase cost.
+   *
+   * New total = current stock + added quantity. The UI state is updated
+   * optimistically (immediate feedback) while the change is persisted to SQLite
+   * through `addStockToProduct`, which also writes an audit row inside the same
+   * transaction. Admin-only entry point — call after RBAC gating.
+   */
+  addStock: (
+    productId: string,
+    addedQuantity: number,
+    costPrice?: number
+  ) => void
   /**
    * Applies post-checkout quantity changes to the UI state only — the
    * authoritative write already happened inside the atomic sale transaction,
@@ -186,6 +202,35 @@ export const useInventoryStore = create<InventoryState>()(
         if (current) {
           persist(() => updateProductRow(merged))
         }
+      },
+
+      addStock: (productId, addedQuantity, costPrice) => {
+        set(
+          state => ({
+            products: state.products.map(product =>
+              product.id === productId
+                ? {
+                    ...product,
+                    quantity: product.quantity + addedQuantity,
+                    // Refresh purchase cost only when a new one is supplied.
+                    ...(costPrice !== undefined
+                      ? { purchasePrice: costPrice }
+                      : {}),
+                  }
+                : product
+            ),
+          }),
+          undefined,
+          'inventory/addStock'
+        )
+        persist(() =>
+          addStockToProduct(
+            productId,
+            addedQuantity,
+            costPrice,
+            useAuthStore.getState().currentUser?.username ?? 'admin'
+          )
+        )
       },
 
       applyStockDeltas: updates => {

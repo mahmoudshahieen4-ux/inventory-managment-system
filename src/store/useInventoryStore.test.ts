@@ -3,6 +3,12 @@ import { initialProducts, useInventoryStore } from './useInventoryStore'
 import { getStockStatus } from '@/lib/stock-status'
 import type { NewProduct } from '@/types/inventory'
 
+function findProduct(id: string) {
+  const product = initialProducts.find(item => item.id === id)
+  if (!product) throw new Error(`Test product ${id} not found`)
+  return product
+}
+
 const sampleProduct: NewProduct = {
   name: 'Paper Towels',
   sku: 'HOM-006',
@@ -82,5 +88,59 @@ describe('InventoryStore', () => {
     const { products } = useInventoryStore.getState()
     expect(products).toHaveLength(initialProducts.length - 1)
     expect(products.find(product => product.id === first.id)).toBeUndefined()
+  })
+
+  it('adds stock to a product and updates the quantity', () => {
+    const target = findProduct('prod-002')
+    useInventoryStore.getState().addStock(target.id, 10)
+
+    const updated = useInventoryStore
+      .getState()
+      .products.find(product => product.id === target.id)
+    expect(updated?.quantity).toBe(target.quantity + 10)
+  })
+
+  it('keeps the purchase price unchanged when no cost is supplied', () => {
+    const target = findProduct('prod-002')
+    useInventoryStore.getState().addStock(target.id, 3)
+
+    const updated = useInventoryStore
+      .getState()
+      .products.find(product => product.id === target.id)
+    expect(updated?.purchasePrice).toBe(target.purchasePrice)
+  })
+
+  it('updates the purchase price when a new cost is supplied', () => {
+    const target = findProduct('prod-002')
+    useInventoryStore.getState().addStock(target.id, 4, 1.75)
+
+    const updated = useInventoryStore
+      .getState()
+      .products.find(product => product.id === target.id)
+    expect(updated?.quantity).toBe(target.quantity + 4)
+    expect(updated?.purchasePrice).toBe(1.75)
+  })
+
+  it('leaves other products untouched when adding stock', () => {
+    const target = findProduct('prod-002')
+    const before = useInventoryStore.getState().products
+
+    useInventoryStore.getState().addStock(target.id, 7)
+
+    const after = useInventoryStore.getState().products
+    expect(after.length).toBe(before.length)
+    after.forEach(product => {
+      if (product.id !== target.id) {
+        expect(product).toEqual(before.find(p => p.id === product.id))
+      }
+    })
+  })
+
+  it('ignores stock additions for unknown product ids', () => {
+    const before = useInventoryStore.getState().products
+
+    useInventoryStore.getState().addStock('not-a-real-id', 99)
+
+    expect(useInventoryStore.getState().products).toEqual(before)
   })
 })

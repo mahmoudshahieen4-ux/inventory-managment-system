@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  addStockToProduct,
   deleteProductRow,
   deleteWorkerRow,
   fetchProducts,
@@ -44,6 +45,7 @@ describe('db service', () => {
     await expect(insertProduct(product)).rejects.toThrow()
     await expect(updateProductRow(product)).rejects.toThrow()
     await expect(deleteProductRow('x')).rejects.toThrow()
+    await expect(addStockToProduct('x', 1)).rejects.toThrow()
     await expect(persistSale({ id: 'x' } as never)).rejects.toThrow()
 
     // Workers Payroll & Attendance functions fail the same way outside Tauri.

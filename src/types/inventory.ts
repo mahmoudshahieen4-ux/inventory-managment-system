@@ -32,3 +32,30 @@ export type NewProduct = Omit<Product, 'id'>
 
 /** Fields that can be edited on an existing product. */
 export type ProductUpdate = Partial<NewProduct>
+
+/** Direction of a recorded stock movement. */
+export type StockMovementType = 'IN'
+
+/**
+ * An audit-log entry recorded whenever stock levels change outside a sale
+ * (e.g. a purchase invoice / shipment received). Stock-out movements from
+ * checkouts are recorded atomically inside the sale transaction instead.
+ */
+export interface StockTransaction {
+  id: string
+  productId: string
+  /** `IN` for receipts / purchase invoices. */
+  type: StockMovementType
+  /** Quantity moved (always a positive magnitude for `IN`). */
+  quantity: number
+  /** Stock level immediately before the movement was applied. */
+  previousQuantity: number
+  /** Stock level immediately after the movement was applied. */
+  newQuantity: number
+  /** New purchase cost attached to the product, when provided. */
+  costPrice?: number
+  /** Username of the account that performed the movement. */
+  userId: string
+  /** ISO timestamp at which the movement was committed. */
+  createdAt: string
+}

@@ -14,10 +14,7 @@ const KEY_MAGIC = 0x5a
 const HEX_PATTERN = /^[0-9A-F]{16}$/
 
 export type LicenseKeyError =
-  | 'FORMAT'
-  | 'CHECKSUM'
-  | 'MACHINE_MISMATCH'
-  | 'EXPIRED'
+  'FORMAT' | 'CHECKSUM' | 'MACHINE_MISMATCH' | 'EXPIRED'
 
 export interface LicenseKeyValidation {
   valid: boolean

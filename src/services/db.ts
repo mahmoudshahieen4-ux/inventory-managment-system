@@ -7,7 +7,7 @@
 import Database from '@tauri-apps/plugin-sql'
 
 import type { AuthAccount } from '@/types/auth'
-import type { Product } from '@/types/inventory'
+import type { Product, StockTransaction } from '@/types/inventory'
 import type {
   AdvanceRecord,
   AttendanceRecord,
@@ -50,10 +50,30 @@ function getDb(): Promise<Database> {
           category TEXT NOT NULL DEFAULT '',
           barcode TEXT,
           unit TEXT,
-          units_per_carton INTEGER,
+                    units_per_carton INTEGER,
           updated_at TEXT NOT NULL
         )
       `)
+      // Stock movement audit log — records every "stock in" (purchase invoice /
+      // shipment received) so inventory changes are traceable. Sale-driven
+      // decrements are logged inside persistSaleAtomic on the same transaction.
+      await db.execute(`CREATE TABLE IF NOT EXISTS stock_transactions (
+        id TEXT PRIMARY KEY,
+        product_id TEXT NOT NULL REFERENCES products(id),
+        type TEXT NOT NULL,
+        quantity INTEGER NOT NULL,
+        previous_quantity INTEGER NOT NULL,
+        new_quantity INTEGER NOT NULL,
+        cost_price REAL,
+        user_id TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      )`)
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_stock_transactions_product_id ON stock_transactions(product_id)'
+      )
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_stock_transactions_created_at ON stock_transactions(created_at)'
+      )
       await db.execute(`
         CREATE TABLE IF NOT EXISTS sales (
           id TEXT PRIMARY KEY,
@@ -391,6 +411,80 @@ export async function deleteProductRow(id: string): Promise<void> {
   await db.execute('DELETE FROM products WHERE id = $1', [id])
 }
 
+/**
+ * Atomically increases a product's on-hand quantity by `addedQuantity` and
+ * appends a `stock_transactions` audit row, mirroring the SQL cited in the
+ * spec:
+ *
+ *   UPDATE products SET quantity = quantity + $1 WHERE id = $2
+ *
+ * Reads the current quantity inside the same `BEGIN … COMMIT` so the logged
+ * `previous_quantity`/`new_quantity` values are always consistent with the
+ * row that was actually updated (no race with a concurrent checkout).
+ *
+ * `costPrice` is optional — when supplied it refreshes the product's purchase
+ * price (a common need when a new invoice arrives at a revised rate); when
+ * omitted the existing cost is left untouched via `COALESCE`.
+ */
+export async function addStockToProduct(
+  productId: string,
+  addedQuantity: number,
+  costPrice?: number,
+  userId = 'admin'
+): Promise<void> {
+  const now = new Date().toISOString()
+  await withTransaction(async db => {
+    const rows = await db.select<{ quantity: number }[]>(
+      'SELECT quantity FROM products WHERE id = $1',
+      [productId]
+    )
+    if (rows.length === 0) {
+      throw new Error(`pos-stock: product not found (${productId})`)
+    }
+    const currentRow = rows[0]
+    const previousQuantity = Number(currentRow?.quantity) || 0
+    const newQuantity = previousQuantity + addedQuantity
+    await db.execute(
+      'UPDATE products SET quantity = quantity + $1, purchase_price = COALESCE($2, purchase_price), updated_at = $3 WHERE id = $4',
+      [addedQuantity, costPrice ?? null, now, productId]
+    )
+    await db.execute(
+      'INSERT INTO stock_transactions (id, product_id, type, quantity, previous_quantity, new_quantity, cost_price, user_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+      [
+        crypto.randomUUID(),
+        productId,
+        'IN',
+        addedQuantity,
+        previousQuantity,
+        newQuantity,
+        costPrice ?? null,
+        userId,
+        now,
+      ]
+    )
+  })
+}
+
+/**
+ * Loads recorded stock movements, optionally scoped to a single product,
+ * newest first — used by the audit/history view.
+ */
+export async function fetchStockTransactions(
+  productId?: string
+): Promise<StockTransaction[]> {
+  if (!isTauriRuntime()) return []
+  const db = await getDb()
+  const rows = productId
+    ? await db.select<StockTransactionRow[]>(
+        'SELECT id, product_id, type, quantity, previous_quantity, new_quantity, cost_price, user_id, created_at FROM stock_transactions WHERE product_id = $1 ORDER BY created_at DESC',
+        [productId]
+      )
+    : await db.select<StockTransactionRow[]>(
+        'SELECT id, product_id, type, quantity, previous_quantity, new_quantity, cost_price, user_id, created_at FROM stock_transactions ORDER BY created_at DESC'
+      )
+  return rows.map(toStockTransaction)
+}
+
 /* ------------------------------------------------------------------ */
 /* Sales persistence                                                   */
 /* ------------------------------------------------------------------ */
@@ -492,6 +586,36 @@ export async function persistSale(sale: Sale): Promise<void> {
 export interface StockUpdate {
   productId: string
   newQuantity: number
+}
+
+/* ------------------------------------------------------------------ */
+/* Stock transactions (audit log for non-sale stock movements)        */
+/* ------------------------------------------------------------------ */
+
+interface StockTransactionRow {
+  id: string
+  product_id: string
+  type: string
+  quantity: number
+  previous_quantity: number
+  new_quantity: number
+  cost_price: number | null
+  user_id: string
+  created_at: string
+}
+
+function toStockTransaction(row: StockTransactionRow): StockTransaction {
+  return {
+    id: row.id,
+    productId: row.product_id,
+    type: (row.type as StockTransaction['type']) ?? 'IN',
+    quantity: row.quantity,
+    previousQuantity: row.previous_quantity,
+    newQuantity: row.new_quantity,
+    costPrice: row.cost_price ?? undefined,
+    userId: row.user_id,
+    createdAt: row.created_at,
+  }
 }
 
 /**
