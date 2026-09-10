@@ -15,6 +15,8 @@ import {
 import { Input } from '@/components/ui/input'
 import { useAutoSelectOnFocus } from '@/hooks/use-auto-select-on-focus'
 import { roundMoney } from '@/lib/money'
+import { addStockToProduct, isTauriRuntime } from '@/services/db'
+import { useAuthStore } from '@/store/useAuthStore'
 import { useInventoryStore } from '@/store/useInventoryStore'
 import { useSalesStore } from '@/store/useSalesStore'
 import type { ReturnItem, Sale } from '@/types/sales'
@@ -72,10 +74,26 @@ export function ReturnModal({
       const product = useInventoryStore
         .getState()
         .products.find(entry => entry.id === item.productId)
-      if (product)
+      if (product) {
+        // Update in-memory state immediately for instant UI feedback.
         updateProduct(product.id, {
           quantity: product.quantity + item.quantity,
         })
+        // Persist via addStockToProduct so a RETURN row is written to
+        // stock_transactions — keeps the audit trail complete.
+        if (isTauriRuntime()) {
+          const userId =
+            useAuthStore.getState().currentUser?.username ?? 'admin'
+          addStockToProduct(
+            product.id,
+            item.quantity,
+            undefined,
+            userId
+          ).catch(error => {
+            toast.error(String(error))
+          })
+        }
+      }
     }
 
     onComplete(items)

@@ -33,7 +33,7 @@ export function ReceiptModal({ sale, open, onOpenChange }: ReceiptModalProps) {
   }
 
   const cashierName =
-    sale.cashierId === 'ADMIN' ? t('auth.role.admin') : t('auth.role.cashier')
+    sale.cashierId === 'admin' ? t('auth.role.admin') : t('auth.role.cashier')
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

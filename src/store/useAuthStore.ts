@@ -202,7 +202,10 @@ export const useAuthStore = create<AuthState>()(
           )
           return false
         }
-        if (newPassword === currentPassword) {
+        // Only check for same password on self-service path (currentPassword
+        // is provided). On the admin-reset path currentPassword is undefined,
+        // so the comparison is meaningless and must be skipped.
+        if (currentPassword !== undefined && newPassword === currentPassword) {
           set(
             { error: { code: 'SAME_PASSWORD' } },
             undefined,
@@ -255,10 +258,32 @@ export const useAuthStore = create<AuthState>()(
             if (isTauriRuntime()) {
               accounts = await fetchAuthUsers()
               if (accounts.length === 0) {
-                // First launch on desktop: seed the default accounts.
+                // First launch on desktop (or after a reset): seed defaults.
                 accounts = await createDefaultAccounts()
                 for (const account of accounts) {
                   await insertAuthUser(account)
+                }
+              } else {
+                // Guard: if any stored hash is not valid PBKDF2 format
+                // (e.g. corrupted or created before hashing was added),
+                // reset it to the default password so the user isn't locked out.
+                let reseeded = false
+                for (const account of accounts) {
+                  const isValidHash =
+                    account.passwordHash.startsWith('pbkdf2-sha256$') &&
+                    account.passwordHash.split('$').length === 4
+                  if (!isValidHash) {
+                    const creds = DEFAULT_CREDENTIALS[account.role]
+                    if (creds) {
+                      const passwordHash = await hashPassword(creds.password)
+                      await updateAuthUserPassword(account.id, passwordHash)
+                      account.passwordHash = passwordHash
+                      reseeded = true
+                    }
+                  }
+                }
+                if (reseeded) {
+                  accounts = await fetchAuthUsers()
                 }
               }
             } else {

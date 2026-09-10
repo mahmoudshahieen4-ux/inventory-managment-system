@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 
 import { isValidEAN13 } from '@/lib/barcode'
 import { initialProducts, useInventoryStore } from '@/store/useInventoryStore'
-import { render, screen } from '@/test/test-utils'
+import { fireEvent, render, screen } from '@/test/test-utils'
 import type { Product } from '@/types/inventory'
 import { ProductFormModal } from './ProductFormModal'
 
@@ -158,7 +158,11 @@ describe('ProductFormModal', () => {
 
     await user.type(screen.getByLabelText('Name*'), 'Test Product')
     await user.type(screen.getByLabelText('Category*'), 'Testing')
-    await user.type(screen.getByLabelText('Quantity*'), '-5')
+    // type="number" inputs reject the "-" character via keyboard simulation in
+    // jsdom; use fireEvent.change to set a negative value the validator can catch.
+    fireEvent.change(screen.getByLabelText('Quantity*'), {
+      target: { value: '-5' },
+    })
     await user.type(screen.getByLabelText('Min Threshold*'), '2')
     await user.type(screen.getByLabelText('Purchase Price*'), '1')
     await user.type(screen.getByLabelText('Selling Price*'), '3')
@@ -185,7 +189,11 @@ describe('ProductFormModal', () => {
     // Locale-style decimal comma must be parsed as 12.5
     await user.type(screen.getByLabelText('Purchase Price*'), '12,50')
     await user.type(screen.getByLabelText('Selling Price*'), '20')
-    await user.type(screen.getByLabelText('Quantity*'), '12')
+    // Quantity input uses useAutoSelectOnFocus; typing '12' char-by-char in
+    // jsdom overwrites the first digit. Set the value directly instead.
+    fireEvent.change(screen.getByLabelText('Quantity*'), {
+      target: { value: '12' },
+    })
     await user.type(screen.getByLabelText('Min Threshold*'), '4')
 
     await user.click(screen.getByRole('button', { name: 'Create Product' }))

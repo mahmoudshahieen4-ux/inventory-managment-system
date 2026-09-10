@@ -1,37 +1,31 @@
-name: 'Release Tauri Template App'
+name: 'Release'
 
+# Triggered when you push a tag like v1.0.0, v1.2.3, etc.
+# Or manually from the Actions tab on GitHub
 on:
   push:
-    tags: ['v*']
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version (e.g., v1.0.0)'
+        description: 'Release version (e.g. v1.2.0)'
         required: true
         type: string
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: 1
 
 jobs:
-  publish-tauri:
+  release-windows:
+    name: Build & Release (Windows x64)
+    runs-on: windows-latest
     permissions:
-      contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: 'macos-latest'
-            args: '--bundles app,dmg'
-          - platform: 'windows-latest'
-            args: '--bundles msi'
-          - platform: 'ubuntu-22.04'
-            args: '--bundles appimage'
+      contents: write # needed to create GitHub releases
 
-    runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -42,42 +36,42 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Rust cache
+      # Cache Cargo registry + build artifacts to speed up subsequent builds
+      - name: Cache Rust build
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
 
-      - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build and release
-        uses: tauri-apps/tauri-action@dev
+      # tauri-action builds the app, signs the updater payload with your
+      # private key, creates the GitHub release, and attaches all artifacts
+      # including the generated latest.json update manifest automatically.
+      - name: Build, sign & publish release
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Store your private key as a GitHub Secret named TAURI_PRIVATE_KEY
+          # and the password as TAURI_KEY_PASSWORD
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name || inputs.version }}
-          releaseName: 'Tauri Template App ${{ github.ref_name || inputs.version }}'
+          releaseName: 'Inventory POS System ${{ github.ref_name || inputs.version }}'
           releaseBody: |
-            ## Tauri Template App ${{ github.ref_name || inputs.version }}
+            ## ما الجديد في هذا الإصدار؟
 
-            ### Installation Instructions
-            - **macOS**: Download the `.dmg` file and drag to Applications folder
-            - **Windows**: Download the `.msi` file and run the installer
-            - **Linux**: Download the `.AppImage` file, make it executable (`chmod +x`), and run
+            ### تثبيت جديد
+            - **Windows**: حمّل ملف `inventory-pos-system_x.x.x_x64-setup.exe` وشغّله
 
-            ### Auto-Updates
-            Existing users will receive automatic update notifications.
+            ### تحديث تلقائي
+            المستخدمون الحاليون سيتلقون إشعار التحديث تلقائياً عند فتح التطبيق.
 
-            **Full Changelog**: https://github.com/${{ github.repository }}/commits/${{ github.ref_name || inputs.version }}
-          releaseDraft: true
+            ---
+            **سجل التغييرات الكامل**: https://github.com/${{ github.repository }}/commits/${{ github.ref_name || inputs.version }}
+          releaseDraft: false
           prerelease: false
+          # Generates latest.json and attaches it to the release automatically
           includeUpdaterJson: true
-          args: ${{ matrix.args }}
+          args: '--bundles nsis'

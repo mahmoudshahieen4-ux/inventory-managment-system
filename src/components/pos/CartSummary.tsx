@@ -108,7 +108,7 @@ export function CartSummary({ onCheckoutComplete }: CartSummaryProps) {
   useEffect(() => {
     registerPosActions({ checkout: handleCheckout })
     return () => unregisterPosActions()
-  })
+  }, [handleCheckout])
 
   const handleQuantityChange = (
     productId: string,

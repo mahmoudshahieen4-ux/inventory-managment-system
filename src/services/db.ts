@@ -78,6 +78,8 @@ function getDb(): Promise<Database> {
         CREATE TABLE IF NOT EXISTS sales (
           id TEXT PRIMARY KEY,
           invoice_number TEXT NOT NULL,
+          subtotal REAL NOT NULL DEFAULT 0,
+          tax REAL NOT NULL DEFAULT 0,
           total_amount REAL NOT NULL,
           total_profit REAL NOT NULL DEFAULT 0,
           cashier_name TEXT NOT NULL,
@@ -90,6 +92,7 @@ function getDb(): Promise<Database> {
           sale_id TEXT NOT NULL REFERENCES sales(id),
           product_id TEXT NOT NULL,
           product_name TEXT NOT NULL,
+          sku TEXT NOT NULL DEFAULT '',
           quantity INTEGER NOT NULL,
           purchase_price REAL NOT NULL DEFAULT 0,
           unit_price REAL NOT NULL,
@@ -269,6 +272,17 @@ function getDb(): Promise<Database> {
         .catch(() => {
           // Column already exists — nothing to do.
         })
+      // Migration: add sku column to sale_items (added to track item SKU on receipts).
+      await db
+        .execute("ALTER TABLE sale_items ADD COLUMN sku TEXT NOT NULL DEFAULT ''")
+        .catch(() => {})
+      // Migration: add subtotal and tax columns to sales (for accurate receipt reprints).
+      await db
+        .execute('ALTER TABLE sales ADD COLUMN subtotal REAL NOT NULL DEFAULT 0')
+        .catch(() => {})
+      await db
+        .execute('ALTER TABLE sales ADD COLUMN tax REAL NOT NULL DEFAULT 0')
+        .catch(() => {})
       // Migrations for trial-period columns added to the license table later.
       for (const column of [
         'first_run_date',
@@ -492,6 +506,8 @@ export async function fetchStockTransactions(
 interface SaleRow {
   id: string
   invoice_number: string
+  subtotal: number
+  tax: number
   total_amount: number
   total_profit: number
   cashier_name: string
@@ -503,6 +519,7 @@ interface SaleItemRow {
   sale_id: string
   product_id: string
   product_name: string
+  sku: string
   quantity: number
   purchase_price: number
   unit_price: number
@@ -553,10 +570,12 @@ async function withTransaction<T>(
 export async function persistSale(sale: Sale): Promise<void> {
   await withTransaction(async db => {
     await db.execute(
-      'INSERT INTO sales (id, invoice_number, total_amount, total_profit, cashier_name, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
+      'INSERT INTO sales (id, invoice_number, subtotal, tax, total_amount, total_profit, cashier_name, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
       [
         sale.id,
         sale.invoiceNumber,
+        sale.subtotal,
+        sale.tax,
         sale.total,
         sale.totalProfit ?? 0,
         sale.cashierId,
@@ -565,12 +584,13 @@ export async function persistSale(sale: Sale): Promise<void> {
     )
     for (const item of sale.items) {
       await db.execute(
-        'INSERT INTO sale_items (id, sale_id, product_id, product_name, quantity, purchase_price, unit_price, total_price, profit) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+        'INSERT INTO sale_items (id, sale_id, product_id, product_name, sku, quantity, purchase_price, unit_price, total_price, profit) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
         [
           crypto.randomUUID(),
           sale.id,
           item.productId,
           item.name,
+          item.sku ?? '',
           item.quantity,
           item.purchasePrice ?? 0,
           item.unitPrice,
@@ -630,10 +650,12 @@ export async function persistSaleAtomic(
 ): Promise<void> {
   await withTransaction(async db => {
     await db.execute(
-      'INSERT INTO sales (id, invoice_number, total_amount, total_profit, cashier_name, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
+      'INSERT INTO sales (id, invoice_number, subtotal, tax, total_amount, total_profit, cashier_name, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
       [
         sale.id,
         sale.invoiceNumber,
+        sale.subtotal,
+        sale.tax,
         sale.total,
         sale.totalProfit ?? 0,
         sale.cashierId,
@@ -642,12 +664,13 @@ export async function persistSaleAtomic(
     )
     for (const item of sale.items) {
       await db.execute(
-        'INSERT INTO sale_items (id, sale_id, product_id, product_name, quantity, purchase_price, unit_price, total_price, profit) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+        'INSERT INTO sale_items (id, sale_id, product_id, product_name, sku, quantity, purchase_price, unit_price, total_price, profit) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
         [
           crypto.randomUUID(),
           sale.id,
           item.productId,
           item.name,
+          item.sku ?? '',
           item.quantity,
           item.purchasePrice ?? 0,
           item.unitPrice,
@@ -669,10 +692,15 @@ export async function persistSaleAtomic(
 export async function fetchSales(): Promise<Sale[]> {
   const db = await getDb()
   const saleRows = await db.select<SaleRow[]>(
-    'SELECT id, invoice_number, total_amount, total_profit, cashier_name, created_at FROM sales ORDER BY created_at DESC'
+    'SELECT id, invoice_number, subtotal, tax, total_amount, total_profit, cashier_name, created_at FROM sales ORDER BY created_at DESC'
   )
+  if (saleRows.length === 0) return []
+
+  // Scope the item fetch to only the loaded sales — avoids loading millions
+  // of rows when the DB has years of history.
+  const saleIds = saleRows.map(r => `'${r.id}'`).join(',')
   const itemRows = await db.select<SaleItemRow[]>(
-    'SELECT id, sale_id, product_id, product_name, quantity, purchase_price, unit_price, total_price, profit FROM sale_items'
+    `SELECT id, sale_id, product_id, product_name, sku, quantity, purchase_price, unit_price, total_price, profit FROM sale_items WHERE sale_id IN (${saleIds})`
   )
 
   const itemsBySale = new Map<string, SaleItem[]>()
@@ -680,7 +708,7 @@ export async function fetchSales(): Promise<Sale[]> {
     const items = itemsBySale.get(row.sale_id) ?? []
     items.push({
       productId: row.product_id,
-      sku: '',
+      sku: row.sku ?? '',
       name: row.product_name,
       purchasePrice: row.purchase_price,
       unitPrice: row.unit_price,
@@ -695,13 +723,38 @@ export async function fetchSales(): Promise<Sale[]> {
     id: row.id,
     invoiceNumber: row.invoice_number,
     items: itemsBySale.get(row.id) ?? [],
-    subtotal: 0,
-    tax: 0,
+    subtotal: row.subtotal ?? 0,
+    tax: row.tax ?? 0,
     total: row.total_amount,
     totalProfit: row.total_profit,
     cashierId: row.cashier_name,
     createdAt: row.created_at,
   }))
+}
+
+/**
+ * Returns the next safe invoice sequence number by reading MAX from the DB.
+ * Avoids collisions when old sales are pruned (cleanupOldSalesData) which
+ * would otherwise lower the in-memory sales.length counter.
+ */
+export async function getNextInvoiceSequence(): Promise<number> {
+  const db = await getDb()
+  const rows = await db.select<{ max_num: string | null }[]>(
+    `SELECT MAX(CAST(REPLACE(invoice_number, 'INV-', '') AS INTEGER)) AS max_num FROM sales WHERE invoice_number LIKE 'INV-%'`
+  )
+  return (Number(rows[0]?.max_num) || 0) + 1
+}
+
+/**
+ * Returns the next safe credit-note sequence number by reading MAX from the DB.
+ */
+export async function getNextCreditNoteSequence(): Promise<number> {
+  const db = await getDb()
+  const year = new Date().getFullYear()
+  const rows = await db.select<{ max_num: string | null }[]>(
+    `SELECT MAX(CAST(REPLACE(credit_note_number, 'CN-${year}-', '') AS INTEGER)) AS max_num FROM credit_notes WHERE credit_note_number LIKE 'CN-${year}-%'`
+  )
+  return (Number(rows[0]?.max_num) || 0) + 1
 }
 
 /** Inserts a credit note and its item lines in one transaction. */

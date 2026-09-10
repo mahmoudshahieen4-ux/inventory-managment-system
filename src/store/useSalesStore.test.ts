@@ -16,7 +16,11 @@ const items: SaleItem[] = [
 
 describe('useSalesStore', () => {
   beforeEach(() => {
-    useSalesStore.setState({ sales: [] })
+    useSalesStore.setState({
+      sales: [],
+      _nextInvoiceSeq: 1,
+      _nextCreditNoteSeq: 1,
+    })
   })
 
   it('starts with an empty sales list', () => {

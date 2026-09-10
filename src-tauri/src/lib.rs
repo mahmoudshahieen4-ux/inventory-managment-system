@@ -51,6 +51,12 @@ pub fn run() {
         );
     }
 
+    // Updater plugin for in-app updates
+    #[cfg(desktop)]
+    {
+        app_builder = app_builder.plugin(tauri_plugin_updater::Builder::new().build());
+    }
+
     app_builder = app_builder
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_notification::init())

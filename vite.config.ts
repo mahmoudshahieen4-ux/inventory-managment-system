@@ -3,7 +3,7 @@ import react, { reactCompilerPreset } from '@vitejs/plugin-react'
 import babel from '@rolldown/plugin-babel'
 import tailwindcss from '@tailwindcss/vite'
 import path, { resolve } from 'path'
-import packageJson from './package.json'
+import packageJson from './package.json' with { type: 'json' }
 
 const host = process.env.TAURI_DEV_HOST
 
@@ -21,15 +21,45 @@ export default defineConfig(async () => ({
   ],
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
+      '@': path.resolve(import.meta.dirname, './src'),
     },
   },
   build: {
-    chunkSizeWarningLimit: 600, // Prevent warnings for template's bundled components
+    // Raise the warning threshold — Tauri apps are distributed as installers,
+    // not served over the network, so chunk size matters less than in web apps.
+    chunkSizeWarningLimit: 1500,
     rolldownOptions: {
       input: {
-        main: resolve(__dirname, 'index.html'),
-        'quick-pane': resolve(__dirname, 'quick-pane.html'),
+        main: resolve(import.meta.dirname, 'index.html'),
+        'quick-pane': resolve(import.meta.dirname, 'quick-pane.html'),
+      },
+      output: {
+        // Split heavy vendor libraries into separate chunks so the browser
+        // (WebView2) can cache them independently of app code changes.
+        // NOTE: Vite 8 / Rolldown requires manualChunks to be a *function*,
+        // not the legacy object form. The trailing slash in the match prevents
+        // false positives (e.g. "react" matching "react-dom").
+        manualChunks(id: string): string | undefined {
+          const vendorMap: Record<string, string[]> = {
+            'vendor-react': ['react', 'react-dom'],
+            'vendor-ui': [
+              '@radix-ui/react-dialog',
+              '@radix-ui/react-alert-dialog',
+              '@radix-ui/react-select',
+              '@radix-ui/react-dropdown-menu',
+              '@radix-ui/react-popover',
+              '@radix-ui/react-tooltip',
+            ],
+            'vendor-icons': ['lucide-react'],
+            'vendor-dates': ['date-fns'],
+            'vendor-i18n': ['i18next', 'react-i18next'],
+          }
+          for (const [chunkName, packages] of Object.entries(vendorMap)) {
+            if (packages.some(pkg => id.includes(`node_modules/${pkg}/`))) {
+              return chunkName
+            }
+          }
+        },
       },
     },
   },

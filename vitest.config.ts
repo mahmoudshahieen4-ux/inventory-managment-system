@@ -1,4 +1,4 @@
-import path from 'path'
+﻿import path from 'path'
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 
@@ -15,14 +15,7 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'],
-    exclude: [
-      'node_modules',
-      'dist',
-      'src-tauri',
-      '.git',
-      '.cache',
-      'build',
-    ],
+    exclude: ['node_modules', 'dist', 'src-tauri', '.git', '.cache', 'build'],
     coverage: {
       provider: 'v8',
       thresholds: {
@@ -34,7 +27,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
+      '@': path.resolve(import.meta.dirname, './src'),
     },
   },
 })

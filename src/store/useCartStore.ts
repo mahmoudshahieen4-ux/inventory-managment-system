@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 
 import { roundMoney } from '@/lib/money'
+import { useInventoryStore } from '@/store/useInventoryStore'
 import type { Product } from '@/types/inventory'
 import type { CartItem } from '@/types/sales'
 
@@ -119,7 +120,14 @@ export const useCartStore = create<CartState>()(
             )
             if (!item) return state
 
-            const clamped = Math.max(0, newQty)
+            // Enforce stock ceiling from the inventory store so manual
+            // quantity inputs can never oversell beyond available stock.
+            const stock =
+              useInventoryStore
+                .getState()
+                .products.find(p => p.id === productId)?.quantity ?? Infinity
+
+            const clamped = Math.min(Math.max(0, newQty), stock)
             if (clamped === 0) {
               return {
                 items: state.items.filter(

@@ -7,6 +7,8 @@ import { roundMoney } from '@/lib/money'
 import {
   fetchCreditNotes,
   fetchSales,
+  getNextCreditNoteSequence,
+  getNextInvoiceSequence,
   initializeDatabase,
   isTauriRuntime,
   persistCreditNote,
@@ -18,6 +20,10 @@ import type { CreditNote, ReturnItem, Sale } from '@/types/sales'
 export interface SalesState {
   /** Completed sales, newest first. */
   sales: Sale[]
+  /** Next invoice sequence number — seeded from DB MAX on hydrate to avoid collisions. */
+  _nextInvoiceSeq: number
+  /** Next credit-note sequence number — seeded from DB MAX on hydrate. */
+  _nextCreditNoteSeq: number
   /**
    * Atomic checkout: records the sale and applies the inventory stock
    * decrements inside one SQLite transaction. The in-memory sales list is
@@ -46,18 +52,25 @@ export const useSalesStore = create<SalesState>()(
     (set, get) => ({
       sales: [],
       creditNotes: [],
+      _nextInvoiceSeq: 1,
+      _nextCreditNoteSeq: 1,
 
       getSaleById: id => get().sales.find(sale => sale.id === id),
 
       addSaleAtomic: (sale, stockUpdates) => {
+        // Use the DB-seeded sequence counter — safe after pruning/cleanup.
+        const seq = get()._nextInvoiceSeq
         const record: Sale = {
           ...sale,
           id: crypto.randomUUID(),
           createdAt: new Date().toISOString(),
-          invoiceNumber: `INV-${String(get().sales.length + 1).padStart(4, '0')}`,
+          invoiceNumber: `INV-${String(seq).padStart(4, '0')}`,
         }
         set(
-          state => ({ sales: [record, ...state.sales] }),
+          state => ({
+            sales: [record, ...state.sales],
+            _nextInvoiceSeq: state._nextInvoiceSeq + 1,
+          }),
           undefined,
           'sales/addSaleAtomic'
         )
@@ -78,9 +91,10 @@ export const useSalesStore = create<SalesState>()(
           .reduce((total, item) => total + item.quantity, 0),
 
       createCreditNote: (sale, items, cashierId) => {
+        const seq = get()._nextCreditNoteSeq
         const record: CreditNote = {
           id: crypto.randomUUID(),
-          creditNoteNumber: `CN-${new Date().getFullYear()}-${String(get().creditNotes.length + 1).padStart(4, '0')}`,
+          creditNoteNumber: `CN-${new Date().getFullYear()}-${String(seq).padStart(4, '0')}`,
           originalInvoiceNumber: sale.invoiceNumber,
           originalSaleId: sale.id,
           items,
@@ -91,7 +105,10 @@ export const useSalesStore = create<SalesState>()(
           createdAt: new Date().toISOString(),
         }
         set(
-          state => ({ creditNotes: [record, ...state.creditNotes] }),
+          state => ({
+            creditNotes: [record, ...state.creditNotes],
+            _nextCreditNoteSeq: state._nextCreditNoteSeq + 1,
+          }),
           undefined,
           'sales/createCreditNote'
         )
@@ -107,12 +124,21 @@ export const useSalesStore = create<SalesState>()(
         if (!isTauriRuntime()) return
         try {
           await initializeDatabase()
-          const stored = await fetchSales()
-          const storedCreditNotes = await fetchCreditNotes()
+          const [stored, storedCreditNotes, nextInvoiceSeq, nextCreditNoteSeq] =
+            await Promise.all([
+              fetchSales(),
+              fetchCreditNotes(),
+              getNextInvoiceSequence(),
+              getNextCreditNoteSequence(),
+            ])
           set(
-            { creditNotes: storedCreditNotes },
+            {
+              creditNotes: storedCreditNotes,
+              _nextInvoiceSeq: nextInvoiceSeq,
+              _nextCreditNoteSeq: nextCreditNoteSeq,
+            },
             undefined,
-            'sales/hydrateCreditNotes'
+            'sales/hydrateMeta'
           )
           if (stored.length > 0) {
             set({ sales: stored }, undefined, 'sales/hydrate')

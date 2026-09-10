@@ -46,7 +46,12 @@ describe('POSScreen', () => {
     toastInfo.mockClear()
     useInventoryStore.setState({ products: initialProducts })
     useCartStore.setState({ items: [] })
-    useSalesStore.setState({ sales: [] })
+    useSalesStore.setState({
+      sales: [],
+      creditNotes: [],
+      _nextInvoiceSeq: 1,
+      _nextCreditNoteSeq: 1,
+    })
     useAuthStore.setState({
       currentUser: {
         id: 'user-cashier',

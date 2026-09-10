@@ -365,6 +365,8 @@ export const usePayrollStore = create<PayrollState>()(
             )
           } else {
             // First launch: persist the seed workers so they survive restarts.
+            // salaryPayments is still applied (empty array on first launch).
+            set({ salaryPayments }, undefined, 'payroll/hydrateSalaryPayments')
             for (const worker of get().workers) {
               await persistWorker(worker)
             }
