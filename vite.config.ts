@@ -25,20 +25,20 @@ export default defineConfig(async () => ({
     },
   },
   build: {
-    // Raise the warning threshold — Tauri apps are distributed as installers,
-    // not served over the network, so chunk size matters less than in web apps.
+    // Tauri apps ship as installers rather than over the network, so the
+    // default chunk-size warning threshold is raised for vendor splits below.
     chunkSizeWarningLimit: 1500,
+    // Rolldown is Vite 8's bundler: `build.rolldownOptions` is the canonical
+    // key (`build.rollupOptions` is only a deprecated alias).
     rolldownOptions: {
       input: {
         main: resolve(import.meta.dirname, 'index.html'),
         'quick-pane': resolve(import.meta.dirname, 'quick-pane.html'),
       },
       output: {
-        // Split heavy vendor libraries into separate chunks so the browser
-        // (WebView2) can cache them independently of app code changes.
-        // NOTE: Vite 8 / Rolldown requires manualChunks to be a *function*,
-        // not the legacy object form. The trailing slash in the match prevents
-        // false positives (e.g. "react" matching "react-dom").
+        // Split heavy vendor libraries into stable chunks so the WebView can
+        // cache them independently of application code changes. Rolldown
+        // requires manualChunks to be a *function* (object form is legacy).
         manualChunks(id: string): string | undefined {
           const vendorMap: Record<string, string[]> = {
             'vendor-react': ['react', 'react-dom'],
@@ -63,11 +63,7 @@ export default defineConfig(async () => ({
       },
     },
   },
-  // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
-  //
-  // 1. prevent vite from obscuring rust errors
   clearScreen: false,
-  // 2. tauri expects a fixed port, fail if that port is not available
   server: {
     port: 1420,
     strictPort: true,
@@ -80,7 +76,6 @@ export default defineConfig(async () => ({
         }
       : undefined,
     watch: {
-      // 3. tell vite to ignore watching `src-tauri`
       ignored: ['**/src-tauri/**'],
     },
   },

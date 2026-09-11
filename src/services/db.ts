@@ -50,7 +50,7 @@ function getDb(): Promise<Database> {
           category TEXT NOT NULL DEFAULT '',
           barcode TEXT,
           unit TEXT,
-                    units_per_carton INTEGER,
+          units_per_carton INTEGER,
           updated_at TEXT NOT NULL
         )
       `)
@@ -210,6 +210,18 @@ function getDb(): Promise<Database> {
       await db.execute(
         'CREATE INDEX IF NOT EXISTS idx_sale_items_product_id ON sale_items(product_id)'
       )
+      // Foreign-key / relation indexes for the payroll tables (cascaded deletes
+      // and per-worker history lookups benefit from them).
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_worker_attendance_worker_id ON worker_attendance(worker_id)'
+      )
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_worker_advances_worker_id ON worker_advances(worker_id)'
+      )
+      // Returns query a credit note by its originating invoice.
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_credit_notes_original_sale_id ON credit_notes(original_sale_id)'
+      )
       await db.execute(`CREATE TABLE IF NOT EXISTS license (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         license_key TEXT,
@@ -274,15 +286,25 @@ function getDb(): Promise<Database> {
         })
       // Migration: add sku column to sale_items (added to track item SKU on receipts).
       await db
-        .execute("ALTER TABLE sale_items ADD COLUMN sku TEXT NOT NULL DEFAULT ''")
-        .catch(() => {})
+        .execute(
+          "ALTER TABLE sale_items ADD COLUMN sku TEXT NOT NULL DEFAULT ''"
+        )
+        .catch(() => {
+          // Column already exists — nothing to do.
+        })
       // Migration: add subtotal and tax columns to sales (for accurate receipt reprints).
       await db
-        .execute('ALTER TABLE sales ADD COLUMN subtotal REAL NOT NULL DEFAULT 0')
-        .catch(() => {})
+        .execute(
+          'ALTER TABLE sales ADD COLUMN subtotal REAL NOT NULL DEFAULT 0'
+        )
+        .catch(() => {
+          // Column already exists — nothing to do.
+        })
       await db
         .execute('ALTER TABLE sales ADD COLUMN tax REAL NOT NULL DEFAULT 0')
-        .catch(() => {})
+        .catch(() => {
+          // Column already exists — nothing to do.
+        })
       // Migrations for trial-period columns added to the license table later.
       for (const column of [
         'first_run_date',

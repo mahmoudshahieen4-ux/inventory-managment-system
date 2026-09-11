@@ -47,7 +47,9 @@ export function UpdateDialog({ update, onDismiss }: Props) {
         switch (event.event) {
           case 'Started':
             setTotalBytes(event.data.contentLength ?? null)
-            logger.info(`Update download started — ${event.data.contentLength} bytes`)
+            logger.info(
+              `Update download started — ${event.data.contentLength} bytes`
+            )
             break
           case 'Progress':
             downloaded += event.data.chunkLength
@@ -82,14 +84,12 @@ export function UpdateDialog({ update, onDismiss }: Props) {
           <AlertDialogHeader>
             <AlertDialogTitle>🎉 تحديث جديد متاح</AlertDialogTitle>
             <AlertDialogDescription>
-              الإصدار <strong>{update.version}</strong> متاح الآن.
-              هل تريد تثبيته الآن؟ سيستغرق التحميل بضع ثوانٍ فقط.
+              الإصدار <strong>{update.version}</strong> متاح الآن. هل تريد
+              تثبيته الآن؟ سيستغرق التحميل بضع ثوانٍ فقط.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={onDismiss}>
-              لاحقاً
-            </AlertDialogCancel>
+            <AlertDialogCancel onClick={onDismiss}>لاحقاً</AlertDialogCancel>
             <AlertDialogAction onClick={handleInstall}>
               تثبيت الآن
             </AlertDialogAction>
@@ -136,14 +136,12 @@ export function UpdateDialog({ update, onDismiss }: Props) {
           <AlertDialogHeader>
             <AlertDialogTitle>✅ تم تثبيت التحديث</AlertDialogTitle>
             <AlertDialogDescription>
-              تم تثبيت الإصدار <strong>{update.version}</strong> بنجاح.
-              أعد تشغيل التطبيق لتفعيل التحديث.
+              تم تثبيت الإصدار <strong>{update.version}</strong> بنجاح. أعد
+              تشغيل التطبيق لتفعيل التحديث.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={onDismiss}>
-              لاحقاً
-            </AlertDialogCancel>
+            <AlertDialogCancel onClick={onDismiss}>لاحقاً</AlertDialogCancel>
             <AlertDialogAction onClick={handleRestart}>
               إعادة التشغيل الآن
             </AlertDialogAction>
@@ -162,7 +160,9 @@ export function UpdateDialog({ update, onDismiss }: Props) {
           <AlertDialogDescription>
             حدث خطأ أثناء تثبيت التحديث. يمكنك تحميله يدوياً من GitHub.
             <br />
-            <span className="text-xs text-destructive mt-1 block">{errorMsg}</span>
+            <span className="text-xs text-destructive mt-1 block">
+              {errorMsg}
+            </span>
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

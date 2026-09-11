@@ -16,6 +16,7 @@ vite.config.ts
 
 # Generated files
 package-lock.json
+pnpm-lock.yaml
 .git/
 src/lib/bindings.ts
 

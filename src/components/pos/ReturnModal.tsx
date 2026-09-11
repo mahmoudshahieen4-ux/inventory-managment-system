@@ -84,14 +84,11 @@ export function ReturnModal({
         if (isTauriRuntime()) {
           const userId =
             useAuthStore.getState().currentUser?.username ?? 'admin'
-          addStockToProduct(
-            product.id,
-            item.quantity,
-            undefined,
-            userId
-          ).catch(error => {
-            toast.error(String(error))
-          })
+          addStockToProduct(product.id, item.quantity, undefined, userId).catch(
+            error => {
+              toast.error(String(error))
+            }
+          )
         }
       }
     }

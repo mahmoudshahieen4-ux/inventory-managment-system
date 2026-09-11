@@ -1,6 +1,6 @@
 import { Minus, Plus, ShoppingCart, Trash2 } from 'lucide-react'
 import type { ChangeEvent } from 'react'
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -105,10 +105,17 @@ export function CartSummary({ onCheckoutComplete }: CartSummaryProps) {
   }
 
   // Expose checkout to the global F2 shortcut (see use-pos-shortcuts).
+  // The handler is tracked in a ref so the registry installs once and the
+  // effect never re-subscribes when `handleCheckout`'s identity changes on
+  // every render — the exact pattern used by useBarcodeScanner.
+  const checkoutRef = useRef(handleCheckout)
   useEffect(() => {
-    registerPosActions({ checkout: handleCheckout })
+    checkoutRef.current = handleCheckout
+  })
+  useEffect(() => {
+    registerPosActions({ checkout: () => checkoutRef.current() })
     return () => unregisterPosActions()
-  }, [handleCheckout])
+  }, [])
 
   const handleQuantityChange = (
     productId: string,
