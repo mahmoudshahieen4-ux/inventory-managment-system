@@ -101,10 +101,10 @@ export function CommandPalette() {
                 value={command.id}
                 onSelect={() => handleCommandSelect(command.id)}
               >
-                {command.icon && <command.icon className="mr-2 h-4 w-4" />}
+                {command.icon && <command.icon className="me-2 h-4 w-4" />}
                 <span>{t(command.labelKey)}</span>
                 {command.descriptionKey && (
-                  <span className="ml-auto text-xs text-muted-foreground">
+                  <span className="ms-auto text-xs text-muted-foreground">
                     {t(command.descriptionKey)}
                   </span>
                 )}

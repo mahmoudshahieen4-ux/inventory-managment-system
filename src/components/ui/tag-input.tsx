@@ -117,7 +117,7 @@ const TagInput = React.forwardRef<HTMLDivElement, TagInputProps>(
                     e.stopPropagation()
                     removeTag(tag.id)
                   }}
-                  className="ml-1 hover:bg-destructive/20 rounded-sm p-0.5 transition-colors"
+                  className="ms-1 hover:bg-destructive/20 rounded-sm p-0.5 transition-colors"
                   aria-label={`Remove ${tag.text} tag`}
                 >
                   <X className="size-3" />

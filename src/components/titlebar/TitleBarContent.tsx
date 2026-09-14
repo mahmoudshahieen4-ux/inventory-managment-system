@@ -17,7 +17,7 @@ import {
 export function TitleBarLeftActions() {
   return (
     <div className="flex items-center gap-1">
-      <div className="mr-2 flex items-center gap-1.5 px-1 text-primary">
+      <div className="me-2 flex items-center gap-1.5 px-1 text-primary">
         <Store className="size-4" aria-hidden="true" />
         <span className="text-xs font-bold tracking-wide">Hypeer Market</span>
       </div>
