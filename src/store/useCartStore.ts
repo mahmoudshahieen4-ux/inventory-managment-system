@@ -6,8 +6,12 @@ import { useInventoryStore } from '@/store/useInventoryStore'
 import type { Product } from '@/types/inventory'
 import type { CartItem } from '@/types/sales'
 
-/** Sales tax rate applied to every checkout. Set to 0.05 for 5%, or 0 to disable tax. */
-export const TAX_RATE = 0.05
+/**
+ * Sales tax rate applied to every checkout. `0` disables tax entirely —
+ * receipts and the cart summary then show only the subtotal and grand total
+ * (`sale.tax` is still persisted as `0` for backward compatibility).
+ */
+export const TAX_RATE = 0
 
 /** Canonical two-decimal rounding lives in `lib/money.ts`; re-exported for the cart selectors. */
 export { roundMoney }

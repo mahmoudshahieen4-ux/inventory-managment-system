@@ -58,6 +58,7 @@ import type {
 
 /** تسميات النطاقات الزمنية لمجموعة التبديل. */
 const TIME_RANGE_LABELS: Record<TimeRange, string> = {
+  TODAY: 'اليوم',
   '1_MONTH': 'آخر 30 يوم',
   '3_MONTHS': 'آخر 3 أشهر',
   '6_MONTHS': 'آخر 6 أشهر',
@@ -217,7 +218,11 @@ export function ProductAnalyticsPage() {
   return (
     <div className="flex h-full flex-col gap-6 overflow-y-auto p-4 sm:p-6">
       <AnalyticsHeader range={range} onRangeChange={setRange} />
-      <KpiCardsSection summary={data?.summary ?? null} isLoading={isLoading} />
+      <KpiCardsSection
+        summary={data?.summary ?? null}
+        isLoading={isLoading}
+        range={range}
+      />
       <div className="grid gap-6 lg:grid-cols-2">
         <TopProductsCard
           products={data?.productPerformance ?? []}
@@ -271,6 +276,9 @@ function AnalyticsHeader({ range, onRangeChange }: AnalyticsHeaderProps) {
         size="sm"
         className="self-start sm:self-auto"
       >
+        <ToggleGroupItem value="TODAY">
+          {TIME_RANGE_LABELS['TODAY']}
+        </ToggleGroupItem>
         <ToggleGroupItem value="1_MONTH">
           {TIME_RANGE_LABELS['1_MONTH']}
         </ToggleGroupItem>
@@ -292,28 +300,39 @@ function AnalyticsHeader({ range, onRangeChange }: AnalyticsHeaderProps) {
 interface KpiCardsSectionProps {
   summary: AnalyticsData['summary'] | null
   isLoading: boolean
+  /** الفترة المختارة — عند اختيار «اليوم» تتبدّل عناوين البطاقات لصيغة يومية. */
+  range: TimeRange
 }
 
-function KpiCardsSection({ summary, isLoading }: KpiCardsSectionProps) {
+function KpiCardsSection({ summary, isLoading, range }: KpiCardsSectionProps) {
   const { t } = useTranslation()
+  const isToday = range === 'TODAY'
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
       <KpiCard
-        title={t('analytics.kpi.unitsSold')}
+        title={t(
+          isToday ? 'analytics.kpi.unitsSoldToday' : 'analytics.kpi.unitsSold'
+        )}
         value={isLoading ? '' : String(summary?.totalUnitsSold ?? 0)}
         icon={<Boxes className="size-4" />}
         badgeLabel={t('analytics.kpi.unitsSoldBadge')}
         isLoading={isLoading}
       />
       <KpiCard
-        title={t('analytics.kpi.totalRevenue')}
+        title={t(
+          isToday
+            ? 'analytics.kpi.totalRevenueToday'
+            : 'analytics.kpi.totalRevenue'
+        )}
         value={isLoading ? '' : formatMoney(summary?.totalRevenue ?? 0)}
         icon={<DollarSign className="size-4" />}
         badgeLabel={t('analytics.kpi.revenueBadge')}
         isLoading={isLoading}
       />
       <KpiCard
-        title={t('analytics.kpi.netProfit')}
+        title={t(
+          isToday ? 'analytics.kpi.netProfitToday' : 'analytics.kpi.netProfit'
+        )}
         value={isLoading ? '' : formatMoney(summary?.totalProfit ?? 0)}
         icon={<TrendingUp className="size-4" />}
         badgeLabel={t('analytics.kpi.profitBadge')}

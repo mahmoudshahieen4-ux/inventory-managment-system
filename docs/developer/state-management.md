@@ -213,7 +213,12 @@ rule:
 ## Local Persistence (SQLite)
 
 Stores persist through `src/services/db.ts`, a thin layer over `tauri-plugin-sql`
-(`sqlite:pos.db`, registered in `src-tauri/src/lib.rs`, permission `sql:default`).
+(`sqlite:pos.db`, registered in `src-tauri/src/lib.rs`). The main window
+capability (`src-tauri/capabilities/default.json`) grants **both**
+`sql:default` (load/select/close) **and** `sql:allow-execute` — without the
+latter every `db.execute()` (schema `CREATE TABLE`, `INSERT`, `UPDATE`,
+`DELETE`) is denied by the IPC permission layer and the app fails at startup
+with `DB_UNAVAILABLE`, leaving the login page unusable.
 
 - **Runtime guard**: every call site checks `isTauriRuntime()` — in the browser
   and unit tests the layer is a no-op, so stores keep working unchanged.

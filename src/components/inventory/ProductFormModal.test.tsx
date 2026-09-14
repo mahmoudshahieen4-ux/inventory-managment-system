@@ -93,7 +93,10 @@ describe('ProductFormModal', () => {
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
     expect(collapsibleContent()).not.toHaveAttribute('inert')
     expect(screen.getByLabelText('Barcode')).toBeInTheDocument()
-    expect(screen.getByLabelText('Unit')).toBeInTheDocument()
+    // Selling units (unit / units-per-carton) were removed from the form —
+    // products are managed with plain integer quantities.
+    expect(screen.queryByLabelText('Unit')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Units per Carton')).not.toBeInTheDocument()
     expect(
       screen.getByRole('button', { name: /hide extra options/i })
     ).toBeInTheDocument()
@@ -185,7 +188,6 @@ describe('ProductFormModal', () => {
 
     await showMoreOptions(user)
     await user.type(screen.getByLabelText('SKU'), 'OIL-010')
-    await user.type(screen.getByLabelText('Unit'), 'bottle')
     // Locale-style decimal comma must be parsed as 12.5
     await user.type(screen.getByLabelText('Purchase Price*'), '12,50')
     await user.type(screen.getByLabelText('Selling Price*'), '20')
@@ -205,7 +207,6 @@ describe('ProductFormModal', () => {
       .products.find(product => product.sku === 'OIL-010')
     expect(created).toMatchObject({
       name: 'Olive Oil 1L',
-      unit: 'bottle',
       quantity: 12,
       minThreshold: 4,
       purchasePrice: 12.5,
@@ -261,17 +262,5 @@ describe('ProductFormModal', () => {
     const barcode = screen.getByLabelText('Barcode') as HTMLInputElement
     expect(barcode.value).toMatch(/^\d{13}$/)
     expect(isValidEAN13(barcode.value)).toBe(true)
-  })
-
-  it('reveals the units-per-carton field when the unit is a carton', async () => {
-    const user = userEvent.setup()
-    renderCreateModal()
-
-    await showMoreOptions(user)
-    expect(screen.queryByLabelText('Units per Carton')).not.toBeInTheDocument()
-
-    await user.type(screen.getByLabelText('Unit'), 'كرتونة')
-
-    expect(screen.getByLabelText('Units per Carton')).toBeInTheDocument()
   })
 })

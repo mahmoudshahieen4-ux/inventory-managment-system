@@ -239,12 +239,16 @@ export function CartSummary({ onCheckoutComplete }: CartSummaryProps) {
             </span>
             <span>{formatMoney(subtotal)}</span>
           </div>
-          <div className="flex justify-between text-sm">
-            <span className="text-muted-foreground">
-              {t('pos.cart.tax', { rate: TAX_PERCENT })}
-            </span>
-            <span>{formatMoney(tax)}</span>
-          </div>
+          {/* Sales tax is disabled (TAX_RATE = 0): the row only appears when a
+              non-zero rate is configured again. */}
+          {tax > 0 && (
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">
+                {t('pos.cart.tax', { rate: TAX_PERCENT })}
+              </span>
+              <span>{formatMoney(tax)}</span>
+            </div>
+          )}
           <div className="flex justify-between text-base font-semibold">
             <span>{t('pos.cart.total')}</span>
             <span>{formatMoney(total)}</span>

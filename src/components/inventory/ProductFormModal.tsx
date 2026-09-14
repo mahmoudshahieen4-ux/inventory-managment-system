@@ -30,8 +30,6 @@ interface ProductFormValues {
   sku: string
   barcode: string
   category: string
-  unit: string
-  unitsPerCarton: string
   purchasePrice: string
   sellingPrice: string
   quantity: string
@@ -52,8 +50,6 @@ const EMPTY_VALUES: ProductFormValues = {
   sku: '',
   barcode: '',
   category: '',
-  unit: '',
-  unitsPerCarton: '',
   purchasePrice: '',
   sellingPrice: '',
   quantity: '',
@@ -73,10 +69,6 @@ function toFormValues(product: Product): ProductFormValues {
     sku: product.sku,
     barcode: product.barcode ?? '',
     category: product.category,
-    unit: product.unit ?? '',
-    unitsPerCarton: product.unitsPerCarton
-      ? String(product.unitsPerCarton)
-      : '',
     purchasePrice: String(product.purchasePrice),
     sellingPrice: String(product.sellingPrice),
     quantity: String(product.quantity),
@@ -100,7 +92,7 @@ function generateProductCode(): string {
 }
 
 /** Fields that live inside the collapsed "more options" section. */
-const OPTIONAL_ERROR_FIELDS = ['sku', 'barcode', 'unitsPerCarton'] as const
+const OPTIONAL_ERROR_FIELDS = ['sku', 'barcode'] as const
 
 /** ARIA props `FormField` hands to the wrapped control. */
 interface FieldControlProps {
@@ -185,15 +177,6 @@ function validate(
     errors.barcode = t('inventory.form.validation.barcodeExists')
   }
 
-  if (values.unit === 'كرتونة') {
-    const unitsPerCarton = parseNumber(values.unitsPerCarton)
-    if (values.unitsPerCarton.trim() === '') {
-      errors.unitsPerCarton = required
-    } else if (!Number.isInteger(unitsPerCarton) || unitsPerCarton < 1) {
-      errors.unitsPerCarton = t('inventory.form.validation.positiveInteger')
-    }
-  }
-
   for (const field of NUMBER_FIELDS) {
     const number = parseNumber(values[field])
     if (values[field].trim() === '') {
@@ -262,7 +245,7 @@ export function ProductFormModal({
 
   // Number of optional fields that already hold a value, surfaced on the
   // disclosure trigger so pre-filled data is visible at a glance.
-  const filledOptionalCount = [values.sku, values.barcode, values.unit].filter(
+  const filledOptionalCount = [values.sku, values.barcode].filter(
     value => value.trim() !== ''
   ).length
 
@@ -285,11 +268,6 @@ export function ProductFormModal({
       sku: values.sku.trim(),
       barcode: values.barcode.trim() || undefined,
       category: values.category.trim(),
-      unit: values.unit.trim() || undefined,
-      unitsPerCarton:
-        values.unit === 'كرتونة'
-          ? parseNumber(values.unitsPerCarton)
-          : undefined,
       purchasePrice: parseNumber(values.purchasePrice),
       sellingPrice: parseNumber(values.sellingPrice),
       quantity: parseNumber(values.quantity),
@@ -310,7 +288,8 @@ export function ProductFormModal({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
-        <DialogHeader>
+        {/* `pe-10` keeps the title/description clear of the close (X) button. */}
+        <DialogHeader className="pe-10">
           <DialogTitle>
             {product
               ? t('inventory.form.editTitle')
@@ -515,43 +494,6 @@ export function ProductFormModal({
                   </div>
                 )}
               </FormField>
-
-              <FormField id="product-unit" label={t('inventory.form.unit')}>
-                {controlProps => (
-                  <Input
-                    {...controlProps}
-                    list="product-unit-options"
-                    value={values.unit}
-                    onChange={setField('unit')}
-                    placeholder={t('inventory.form.unitPlaceholder')}
-                  />
-                )}
-              </FormField>
-              <datalist id="product-unit-options">
-                <option value="علبة" />
-                <option value="كرتونة" />
-              </datalist>
-
-              {values.unit === 'كرتونة' && (
-                <FormField
-                  id="product-units-per-carton"
-                  label={t('inventory.form.unitsPerCarton')}
-                  error={errors.unitsPerCarton}
-                >
-                  {controlProps => (
-                    <Input
-                      {...controlProps}
-                      type="number"
-                      min={1}
-                      step="1"
-                      value={values.unitsPerCarton}
-                      onFocus={onQtyFocus}
-                      onMouseUp={onMouseUpQty}
-                      onChange={setField('unitsPerCarton')}
-                    />
-                  )}
-                </FormField>
-              )}
             </div>
           </CollapsibleSection>
 

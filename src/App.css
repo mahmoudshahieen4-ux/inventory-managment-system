@@ -134,61 +134,105 @@ body {
   }
 }
 
-/* Print styles: when printing (POS receipt), only the receipt area stays visible */
+/* ==========================================================================
+   Receipt barcode placeholder — CSS-generated strip. Styled globally so the
+   on-screen modal preview looks the same as the printed output (thermal
+   receipts have no images; `print-color-adjust` keeps the stripes black).
+   ========================================================================== */
+.receipt-barcode,
+.credit-note-barcode {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 44px;
+  max-width: 210px;
+  margin-inline: auto;
+  background: repeating-linear-gradient(
+    90deg,
+    #000 0,
+    #000 2px,
+    #fff 2px,
+    #fff 5px,
+    #000 5px,
+    #000 6px,
+    #fff 6px,
+    #fff 10px
+  );
+  border-block: 2px solid #000;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.receipt-barcode span,
+.credit-note-barcode span {
+  display: inline-block;
+  background: #fff;
+  padding-inline: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 3px;
+}
+
+/* ==========================================================================
+   Print (POS receipts): only the receipt sheet is printed.
+   - `#root` (the app behind the modal) is removed from the layout entirely.
+   - The dialog chrome (overlay, header, footer buttons, close X) is hidden.
+   - The dialog shell is reset so the receipt sits at the very top of the
+     page, sized for a standard 80mm thermal roll.
+   ========================================================================== */
 @media print {
-  body * {
-    visibility: hidden !important;
+  @page {
+    size: 80mm auto;
+    margin: 0;
   }
 
-  .receipt-print-area,
-  .receipt-print-area *,
-  .credit-note-print-area,
-  .credit-note-print-area * {
-    visibility: visible !important;
-  }
-
-  .receipt-print-area {
-    position: absolute !important;
-    inset-block-start: 0 !important;
-    inset-inline-start: 0 !important;
-    width: 100% !important;
-  }
-
-  .credit-note-print-area {
-    position: absolute !important;
-    inset-block-start: 0 !important;
-    inset-inline-start: 0 !important;
-    width: 80mm !important;
-    max-width: 80mm !important;
-    padding: 4mm !important;
-    color: #000 !important;
+  html,
+  body {
+    height: auto !important;
+    min-height: 0 !important;
     background: #fff !important;
   }
 
-  .credit-note-barcode {
-    background: repeating-linear-gradient(
-      90deg,
-      #000 0,
-      #000 1px,
-      #fff 1px,
-      #fff 3px,
-      #000 3px,
-      #000 5px,
-      #fff 5px,
-      #fff 7px
-    );
-    border-block: 3px solid #000;
-    padding-block: 6px;
-    text-align: center;
-    font-family: monospace;
-    font-size: 14px;
-    letter-spacing: 2px;
+  #root,
+  [data-slot='dialog-overlay'],
+  [data-slot='dialog-header'],
+  [data-slot='dialog-footer'],
+  [data-slot='dialog-close'] {
+    display: none !important;
   }
 
-  .credit-note-barcode span {
-    display: inline-block;
-    background: #fff;
-    padding-inline: 6px;
+  /* Reset the modal shell: un-transform, un-position, un-decorate. */
+  [data-slot='dialog-content'] {
+    position: static !important;
+    inset: auto !important;
+    translate: none !important;
+    transform: none !important;
+    width: auto !important;
+    max-width: none !important;
+    gap: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: #fff !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+  }
+
+  .receipt-print-area,
+  .credit-note-print-area {
+    position: relative !important;
+    inset: auto !important;
+    width: 80mm !important;
+    max-width: 80mm !important;
+    margin: 0 auto !important;
+    padding: 4mm 3mm !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    color: #000 !important;
+    background: #fff !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 }
 

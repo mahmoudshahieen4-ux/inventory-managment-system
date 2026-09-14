@@ -308,7 +308,7 @@ export function InventoryTable() {
                   <TableRow
                     key={product.id}
                     className={cn(
-                      'border-border/60 bg-card text-card-foreground hover:bg-accent/60',
+                      'text-card-foreground',
                       statusStyle.rowClassName
                     )}
                   >
@@ -412,7 +412,7 @@ export function InventoryTable() {
               })}
 
               {filteredProducts.length === 0 && (
-                <TableRow className="hover:bg-transparent">
+                <TableRow className="hover:bg-transparent dark:hover:bg-transparent">
                   <TableCell
                     colSpan={columnCount}
                     className="text-muted-foreground h-32 text-center"

@@ -1249,23 +1249,37 @@ export async function updateAuthUserPassword(
 /* Analytics — product performance & dead-stock reports                */
 /* ------------------------------------------------------------------ */
 
-/** Maps a TimeRange to the number of days used in the SQL date filter. */
-function rangeToDays(range: TimeRange): number {
-  switch (range) {
-    case '1_MONTH':
-      return 30
-    case '3_MONTHS':
-      return 90
-    case '6_MONTHS':
-      return 180
-  }
-}
-
 /** Returns the ISO timestamp for `days` ago (used as the WHERE filter). */
 function cutoffIso(days: number): string {
   const date = new Date()
   date.setDate(date.getDate() - days)
   return date.toISOString()
+}
+
+/** ISO timestamp for local midnight of the current day (start of "today"). */
+function startOfTodayIso(): string {
+  const date = new Date()
+  date.setHours(0, 0, 0, 0)
+  return date.toISOString()
+}
+
+/**
+ * Maps a TimeRange to the ISO cutoff used by the SQL `created_at >= $1`
+ * filter. `TODAY` starts at local midnight; the longer ranges go back N days
+ * from the current moment — matching the JS-computed ISO clock that writes
+ * `sales.created_at`, so both sides of the comparison share one time source.
+ */
+function cutoffForRange(range: TimeRange): string {
+  switch (range) {
+    case 'TODAY':
+      return startOfTodayIso()
+    case '1_MONTH':
+      return cutoffIso(30)
+    case '3_MONTHS':
+      return cutoffIso(90)
+    case '6_MONTHS':
+      return cutoffIso(180)
+  }
 }
 
 /**
@@ -1279,7 +1293,7 @@ export async function fetchProductAnalytics(
 ): Promise<ProductAnalyticsItem[]> {
   if (!isTauriRuntime()) return []
   const db = await getDb()
-  const cutoff = cutoffIso(rangeToDays(range))
+  const cutoff = cutoffForRange(range)
   const rows = await db.select<Record<string, unknown>[]>(
     `SELECT
        si.product_id AS productId,
@@ -1320,7 +1334,7 @@ export async function fetchDeadStockAnalytics(
 ): Promise<DeadStockItem[]> {
   if (!isTauriRuntime()) return []
   const db = await getDb()
-  const cutoff = cutoffIso(rangeToDays(range))
+  const cutoff = cutoffForRange(range)
   const rows = await db.select<Record<string, unknown>[]>(
     `SELECT
        p.id AS productId,
@@ -1410,7 +1424,7 @@ export async function fetchAnalyticsSummary(
     }
   }
   const db = await getDb()
-  const cutoff = cutoffIso(rangeToDays(range))
+  const cutoff = cutoffForRange(range)
 
   const salesRow = await db.select<Record<string, unknown>[]>(
     `SELECT

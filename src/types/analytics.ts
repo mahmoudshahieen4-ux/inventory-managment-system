@@ -6,7 +6,7 @@
  */
 
 /** النطاق الزمني المتاح للتحليلات. */
-export type TimeRange = '1_MONTH' | '3_MONTHS' | '6_MONTHS'
+export type TimeRange = 'TODAY' | '1_MONTH' | '3_MONTHS' | '6_MONTHS'
 
 /** طريقة ترتيب جدول المنتجات الأكثر مبيعاً. */
 export type AnalyticsSortMode = 'profit' | 'quantity'

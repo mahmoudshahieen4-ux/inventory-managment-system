@@ -126,20 +126,31 @@ describe('InventoryTable', () => {
     expect(screen.queryByText('Dark Chocolate Bar')).not.toBeInTheDocument()
   })
 
-  it('keeps out of stock rows white and uses a subtle separator', () => {
+  it('keeps out of stock rows white with explicit hover styling', () => {
     render(<InventoryTable />)
 
     const row = screen.getByText('Espresso Beans 1kg').closest('tr')
     expect(row?.className).toContain('bg-white')
-    expect(row?.className).toContain('border-[#E5E7EB]')
+    expect(row?.className).toContain('border-b-[#E5E7EB]')
+    // Theme-aware hover for both light and dark modes.
+    expect(row?.className).toContain('hover:bg-slate-100')
+    expect(row?.className).toContain('dark:hover:bg-slate-800/60')
   })
 
-  it('keeps low stock rows white and uses a subtle separator', () => {
+  it('highlights low stock rows with an amber tint and accent border', () => {
     render(<InventoryTable />)
 
     const row = screen.getByText('Whole Milk 1L').closest('tr')
-    expect(row?.className).toContain('bg-white')
-    expect(row?.className).toContain('border-[#E5E7EB]')
+    // Subtle amber tint that adapts to both themes.
+    expect(row?.className).toContain('bg-amber-50/70')
+    expect(row?.className).toContain('dark:bg-amber-950/30')
+    // Subtle amber accent border on the reading-start edge.
+    expect(row?.className).toContain('border-s-amber-400/60')
+    expect(row?.className).toContain('dark:border-s-amber-500/50')
+    // Hovering deepens the amber tint instead of falling back to neutral.
+    expect(row?.className).toContain('hover:bg-amber-100/80')
+    expect(row?.className).toContain('dark:hover:bg-amber-900/40')
+    expect(row?.className).not.toContain('bg-white')
   })
 
   it('does not highlight in stock rows', () => {
@@ -147,8 +158,9 @@ describe('InventoryTable', () => {
 
     const row = screen.getByText('Dark Chocolate Bar').closest('tr')
     expect(row?.className).toContain('bg-white')
-    expect(row?.className).not.toContain('bg-rose-950/40')
-    expect(row?.className).not.toContain('bg-amber-950/40')
+    expect(row?.className).toContain('hover:bg-slate-100')
+    expect(row?.className).not.toContain('bg-amber')
+    expect(row?.className).not.toContain('bg-rose')
   })
 
   it('sorts rows by name when clicking the name header', async () => {

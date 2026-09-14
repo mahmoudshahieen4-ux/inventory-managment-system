@@ -38,9 +38,12 @@ describe('ReceiptModal', () => {
     expect(screen.getByText('My Store')).toBeInTheDocument()
     expect(screen.getByText('123 Main Street, City Center')).toBeInTheDocument()
     expect(screen.getByText('+1 (555) 123-4567')).toBeInTheDocument()
-    expect(screen.getByText(/Invoice No\.: INV-0001/)).toBeInTheDocument()
-    expect(screen.getByText(/Cashier: Cashier/)).toBeInTheDocument()
-    expect(screen.getByText(/Date:/)).toBeInTheDocument()
+    expect(screen.getByText('Invoice No.')).toBeInTheDocument()
+    // The invoice number appears in the metadata rows and on the barcode strip.
+    expect(screen.getAllByText('INV-0001').length).toBeGreaterThan(0)
+    // The label and the cashier value are rendered as separate cells.
+    expect(screen.getAllByText('Cashier').length).toBeGreaterThan(0)
+    expect(screen.getByText('Date')).toBeInTheDocument()
   })
 
   it('renders the itemized table with quantities, unit prices and line totals', () => {
@@ -65,12 +68,14 @@ describe('ReceiptModal', () => {
     expect(screen.getByRole('cell', { name: '4.98 ج.م' })).toBeInTheDocument()
   })
 
-  it('shows subtotal, tax, final amount and the footer note', () => {
+  it('shows subtotal, final amount and the footer note, with no tax row', () => {
     render(<ReceiptModal sale={sale} open onOpenChange={vi.fn()} />)
 
     expect(screen.getByText('Subtotal')).toBeInTheDocument()
-    expect(screen.getByText('Tax')).toBeInTheDocument()
     expect(screen.getByText('Final Total')).toBeInTheDocument()
+    // Sales tax is disabled: the row must not appear even when the stored
+    // sale still carries a historical tax value.
+    expect(screen.queryByText('Tax')).not.toBeInTheDocument()
     expect(
       screen.getByText('شكراً لزيارتكم / Thank you for your visit!')
     ).toBeInTheDocument()

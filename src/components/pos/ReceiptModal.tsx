@@ -10,9 +10,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { formatTransactionTimestamp } from '@/lib/date-time'
 import { formatMoney } from '@/lib/money'
 import { STORE_INFO } from '@/lib/store-config'
-import { formatTransactionTimestamp } from '@/lib/date-time'
 import type { Sale } from '@/types/sales'
 
 interface ReceiptModalProps {
@@ -22,7 +22,25 @@ interface ReceiptModalProps {
   onOpenChange: (open: boolean) => void
 }
 
-/** Receipt preview shown after a successful checkout. Printing uses the browser print dialog. */
+/** Dashed separator used between every receipt section (thermal-roll look). */
+function ReceiptDivider() {
+  return (
+    <div
+      aria-hidden="true"
+      className="my-3 border-t border-dashed border-neutral-400"
+    />
+  )
+}
+
+/**
+ * Thermal-receipt preview (80mm roll layout) shown after a successful
+ * checkout. On screen it renders as a narrow paper card; printing uses the
+ * browser print dialog — the `@media print` rules in App.css hide the modal
+ * chrome and print only the `.receipt-print-area` at 80mm.
+ *
+ * Sales tax is disabled (TAX_RATE = 0): the summary shows only the subtotal
+ * and the grand total.
+ */
 export function ReceiptModal({ sale, open, onOpenChange }: ReceiptModalProps) {
   const { t } = useTranslation()
 
@@ -37,60 +55,84 @@ export function ReceiptModal({ sale, open, onOpenChange }: ReceiptModalProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-sm">
+        {/* `pe-10` keeps the title/description clear of the close (X) button. */}
+        <DialogHeader className="pe-10">
           <DialogTitle>{t('pos.receipt.title')}</DialogTitle>
           <DialogDescription>{t('pos.receipt.description')}</DialogDescription>
         </DialogHeader>
 
         {/* Printable area: App.css hides everything else while printing */}
-        <div className="receipt-print-area text-sm">
+        <div className="receipt-print-area mx-auto w-full max-w-[300px] rounded-sm border border-neutral-300 bg-white px-4 py-5 font-mono text-xs text-neutral-950 shadow-sm">
+          {/* Store header */}
           <div className="text-center">
-            <p className="text-base font-semibold">
+            <p className="text-sm font-bold tracking-widest">
               {t('pos.receipt.storeName')}
             </p>
-            <p className="text-muted-foreground text-xs">
-              {STORE_INFO.address}
-            </p>
-            <p className="text-muted-foreground text-xs">{STORE_INFO.phone}</p>
-            <p className="text-muted-foreground text-xs">
-              {t('pos.receipt.date')}:{' '}
-              {formatTransactionTimestamp(sale.createdAt)}
-            </p>
-            <p className="mt-1 font-medium">
-              {t('pos.receipt.invoiceNo')}: {sale.invoiceNumber}
-            </p>
-            <p className="text-muted-foreground text-xs">
-              {t('pos.receipt.cashier')}: {cashierName}
-            </p>
+            <p className="mt-1 text-neutral-600">{STORE_INFO.address}</p>
+            <p className="text-neutral-600">{STORE_INFO.phone}</p>
           </div>
 
-          <table className="mt-4 w-full text-xs">
+          <ReceiptDivider />
+
+          {/* Sale metadata */}
+          <div className="space-y-1">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-neutral-600">{t('pos.receipt.date')}</span>
+              <span className="tabular-nums">
+                {formatTransactionTimestamp(sale.createdAt)}
+              </span>
+            </div>
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-neutral-600">
+                {t('pos.receipt.invoiceNo')}
+              </span>
+              <span className="font-semibold tabular-nums">
+                {sale.invoiceNumber}
+              </span>
+            </div>
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-neutral-600">
+                {t('pos.receipt.cashier')}
+              </span>
+              <span>{cashierName}</span>
+            </div>
+          </div>
+
+          <ReceiptDivider />
+
+          {/* Items */}
+          <table className="w-full">
             <thead>
-              <tr className="border-b">
-                <th className="py-1 text-start font-medium">
+              <tr className="border-b border-dashed border-neutral-400">
+                <th className="py-1 text-start font-semibold">
                   {t('pos.receipt.item')}
                 </th>
-                <th className="py-1 text-center font-medium">
+                <th className="py-1 text-center font-semibold">
                   {t('pos.receipt.qty')}
                 </th>
-                <th className="py-1 text-end font-medium">
+                <th className="py-1 text-end font-semibold">
                   {t('pos.receipt.unitPrice')}
                 </th>
-                <th className="py-1 text-end font-medium">
+                <th className="py-1 text-end font-semibold">
                   {t('pos.receipt.lineTotal')}
                 </th>
               </tr>
             </thead>
             <tbody>
               {sale.items.map(item => (
-                <tr key={item.productId} className="border-b last:border-b-0">
-                  <td className="py-1.5">{item.name}</td>
-                  <td className="py-1.5 text-center">{item.quantity}</td>
-                  <td className="py-1.5 text-end">
+                <tr
+                  key={item.productId}
+                  className="border-b border-dashed border-neutral-300 last:border-b-0"
+                >
+                  <td className="py-1.5 align-top">{item.name}</td>
+                  <td className="py-1.5 text-center align-top tabular-nums">
+                    {item.quantity}
+                  </td>
+                  <td className="py-1.5 text-end align-top tabular-nums">
                     {formatMoney(item.unitPrice)}
                   </td>
-                  <td className="py-1.5 text-end font-medium">
+                  <td className="py-1.5 text-end align-top font-medium tabular-nums">
                     {formatMoney(item.lineTotal)}
                   </td>
                 </tr>
@@ -98,28 +140,31 @@ export function ReceiptModal({ sale, open, onOpenChange }: ReceiptModalProps) {
             </tbody>
           </table>
 
-          <div className="mt-4 space-y-1 border-t pt-3">
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">
+          <ReceiptDivider />
+
+          {/* Totals — subtotal + grand total only (no tax) */}
+          <div className="space-y-1">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-neutral-600">
                 {t('pos.receipt.subtotal')}
               </span>
-              <span>{formatMoney(sale.subtotal)}</span>
+              <span className="tabular-nums">{formatMoney(sale.subtotal)}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">
-                {t('pos.receipt.tax')}
-              </span>
-              <span>{formatMoney(sale.tax)}</span>
-            </div>
-            <div className="flex justify-between font-semibold">
+            <div className="flex items-baseline justify-between gap-2 border-t border-dashed border-neutral-400 pt-1.5 text-sm font-bold">
               <span>{t('pos.receipt.total')}</span>
-              <span>{formatMoney(sale.total)}</span>
+              <span className="tabular-nums">{formatMoney(sale.total)}</span>
             </div>
           </div>
 
-          <p className="mt-4 text-center text-xs text-muted-foreground">
-            {t('pos.receipt.thankYou')}
-          </p>
+          <ReceiptDivider />
+
+          {/* Footer: scannable invoice code + thank-you note */}
+          <div className="text-center">
+            <div className="receipt-barcode" aria-hidden="true">
+              <span>{sale.invoiceNumber}</span>
+            </div>
+            <p className="mt-2 font-semibold">{t('pos.receipt.thankYou')}</p>
+          </div>
         </div>
 
         <DialogFooter className="gap-2">

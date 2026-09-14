@@ -110,10 +110,9 @@ describe('POSScreen', () => {
     await user.click(add)
 
     expect(screen.getByText('In cart: 2')).toBeInTheDocument()
-    expect(screen.getByText('Tax (5%)')).toBeInTheDocument()
-    expect(screen.getByText('0.25 ج.م')).toBeInTheDocument()
+    // Sales tax is disabled (TAX_RATE = 0): no tax row, total == subtotal.
+    expect(screen.queryByText('Tax (5%)')).not.toBeInTheDocument()
     expect(screen.getAllByText('4.98 ج.م').length).toBeGreaterThan(0)
-    expect(screen.getByText('5.23 ج.م')).toBeInTheDocument()
     expect(useCartStore.getState().items.at(0)).toMatchObject({
       productId: 'prod-004',
       quantity: 2,
@@ -155,7 +154,8 @@ describe('POSScreen', () => {
     // Receipt dialog opens automatically
     expect(await screen.findByText('Receipt')).toBeInTheDocument()
     expect(screen.getByText('My Store')).toBeInTheDocument()
-    expect(screen.getByText('5.23 ج.م')).toBeInTheDocument()
+    // No tax: the grand total equals the line total.
+    expect(screen.getAllByText('4.98 ج.م').length).toBeGreaterThan(0)
 
     // Stock deducted immediately: 50 - 2 = 48
     const chocolate = useInventoryStore
@@ -172,7 +172,8 @@ describe('POSScreen', () => {
       lineTotal: 4.98,
     })
     expect(sales.at(0)?.cashierId).toBe('cashier')
-    expect(sales.at(0)?.total).toBe(5.23)
+    // Sales tax is disabled: the stored total equals the subtotal.
+    expect(sales.at(0)?.total).toBe(4.98)
 
     // Cart reset for the next sale
     expect(useCartStore.getState().items).toHaveLength(0)
@@ -214,17 +215,18 @@ describe('POSScreen', () => {
     })[0] as HTMLElement
     await user.click(closeButton)
 
-    // Switch to the history tab and inspect the stored invoice (1 × $2.49 + 5% tax)
+    // Switch to the history tab and inspect the stored invoice (1 × 2.49, no tax)
     await user.click(screen.getByText('Sales History'))
     expect(screen.getByText('INV-0001')).toBeInTheDocument()
-    expect(screen.getByText('2.61 ج.م')).toBeInTheDocument()
+    expect(screen.getByText('2.49 ج.م')).toBeInTheDocument()
 
     // Re-open the receipt from history
     await user.click(
       screen.getByRole('button', { name: 'Re-print receipt INV-0001' })
     )
     expect(await screen.findByText('Receipt')).toBeInTheDocument()
-    expect(screen.getByText('Invoice No.: INV-0001')).toBeInTheDocument()
+    expect(screen.getByText('Invoice No.')).toBeInTheDocument()
+    expect(screen.getAllByText('INV-0001').length).toBeGreaterThan(0)
   })
 
   it('adds a product to the cart when its barcode is scanned hands-free', () => {
