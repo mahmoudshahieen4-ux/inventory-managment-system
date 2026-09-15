@@ -6,6 +6,7 @@
  */
 import Database from '@tauri-apps/plugin-sql'
 
+import { logger } from '@/lib/logger'
 import type { AuthAccount } from '@/types/auth'
 import type { Product, StockTransaction } from '@/types/inventory'
 import type {
@@ -34,10 +35,45 @@ const DB_URL = 'sqlite:pos.db'
 
 let dbPromise: Promise<Database> | null = null
 
+/**
+ * Concurrency pragmas applied right after the connection opens.
+ *
+ * - `journal_mode = WAL` — write-ahead logging lets readers keep reading while
+ *   a writer holds the lock. The default rollback journal blocks every reader
+ *   for the duration of a write, which is what surfaces as "database is locked"
+ *   when an analytics/inventory read overlaps a sale or stock-update commit.
+ *   WAL is a persistent property of the database file, so setting it once is
+ *   enough (unlike the two per-connection settings below).
+ * - `busy_timeout = 5000` — wait up to 5 seconds for a competing lock instead
+ *   of failing instantly.
+ * - `synchronous = NORMAL` — the recommended durability level for WAL
+ *   databases: still crash-safe, with far fewer fsync calls.
+ */
+const SQLITE_PRAGMAS = [
+  'PRAGMA journal_mode = WAL',
+  'PRAGMA busy_timeout = 5000',
+  'PRAGMA synchronous = NORMAL',
+] as const
+
+/**
+ * Best-effort pragma setup: a failure (read-only file, older SQLite build, …)
+ * is logged and swallowed so it can never block application startup.
+ */
+async function applySqlitePragmas(db: Database): Promise<void> {
+  for (const pragma of SQLITE_PRAGMAS) {
+    try {
+      await db.execute(pragma)
+    } catch (error) {
+      logger.warn('SQLite pragma failed', { pragma, error: String(error) })
+    }
+  }
+}
+
 /** Opens (once) the SQLite connection and ensures the schema exists. */
 function getDb(): Promise<Database> {
   if (!dbPromise) {
     dbPromise = Database.load(DB_URL).then(async db => {
+      await applySqlitePragmas(db)
       await db.execute(`
         CREATE TABLE IF NOT EXISTS products (
           id TEXT PRIMARY KEY,
@@ -1292,34 +1328,46 @@ export async function fetchProductAnalytics(
   range: TimeRange
 ): Promise<ProductAnalyticsItem[]> {
   if (!isTauriRuntime()) return []
-  const db = await getDb()
-  const cutoff = cutoffForRange(range)
-  const rows = await db.select<Record<string, unknown>[]>(
-    `SELECT
-       si.product_id AS productId,
-       si.product_name AS productName,
-       SUM(si.quantity) AS totalQuantitySold,
-       SUM(si.total_price) AS totalRevenue,
-       SUM(si.profit) AS totalProfit,
-       ROUND(
-         (SUM(si.profit) / NULLIF(SUM(si.total_price), 0)) * 100,
-         1
-       ) AS profitMargin
-     FROM sale_items si
-     JOIN sales s ON s.id = si.sale_id
-     WHERE s.created_at >= $1
-     GROUP BY si.product_id, si.product_name
-     ORDER BY totalProfit DESC`,
-    [cutoff]
-  )
-  return rows.map(row => ({
-    productId: String(row.productId),
-    productName: String(row.productName),
-    totalQuantitySold: Number(row.totalQuantitySold) || 0,
-    totalRevenue: Number(row.totalRevenue) || 0,
-    totalProfit: Number(row.totalProfit) || 0,
-    profitMargin: Number(row.profitMargin) || 0,
-  }))
+
+  try {
+    const db = await getDb()
+    const cutoff = cutoffForRange(range)
+    const rows = await db.select<Record<string, unknown>[]>(
+      `SELECT
+         si.product_id AS productId,
+         si.product_name AS productName,
+         SUM(si.quantity) AS totalQuantitySold,
+         SUM(si.total_price) AS totalRevenue,
+         SUM(si.profit) AS totalProfit,
+         ROUND(
+           (SUM(si.profit) / NULLIF(SUM(si.total_price), 0)) * 100,
+           1
+         ) AS profitMargin
+       FROM sale_items si
+       JOIN sales s ON s.id = si.sale_id
+       WHERE s.created_at >= $1
+       GROUP BY si.product_id, si.product_name
+       ORDER BY totalProfit DESC`,
+      [cutoff]
+    )
+    return rows.map(row => ({
+      productId: String(row.productId),
+      productName: String(row.productName),
+      totalQuantitySold: Number(row.totalQuantitySold) || 0,
+      totalRevenue: Number(row.totalRevenue) || 0,
+      totalProfit: Number(row.totalProfit) || 0,
+      profitMargin: Number(row.profitMargin) || 0,
+    }))
+  } catch (error) {
+    // Reporting is read-only: a busy/locked database must degrade to an empty
+    // report instead of rejecting the caller and tripping the Analytics
+    // ErrorBoundary. The failure stays visible in the logs for diagnostics.
+    logger.warn('fetchProductAnalytics failed — returning no rows', {
+      error: String(error),
+      range,
+    })
+    return []
+  }
 }
 
 /**
@@ -1333,40 +1381,51 @@ export async function fetchDeadStockAnalytics(
   range: TimeRange
 ): Promise<DeadStockItem[]> {
   if (!isTauriRuntime()) return []
-  const db = await getDb()
-  const cutoff = cutoffForRange(range)
-  const rows = await db.select<Record<string, unknown>[]>(
-    `SELECT
-       p.id AS productId,
-       p.name AS productName,
-       p.sku AS sku,
-       p.category AS category,
-       p.quantity AS quantity,
-       p.purchase_price AS purchasePrice,
-       ROUND(p.quantity * p.purchase_price, 2) AS tiedUpCapital,
-       COALESCE(sales_agg.total_sold, 0) AS quantitySold
-     FROM products p
-     LEFT JOIN (
-       SELECT si.product_id, SUM(si.quantity) AS total_sold
-       FROM sale_items si
-       JOIN sales s ON s.id = si.sale_id
-       WHERE s.created_at >= $1
-       GROUP BY si.product_id
-     ) sales_agg ON sales_agg.product_id = p.id
-     WHERE COALESCE(sales_agg.total_sold, 0) < 3
-     ORDER BY tiedUpCapital DESC`,
-    [cutoff]
-  )
-  return rows.map(row => ({
-    productId: String(row.productId),
-    productName: String(row.productName),
-    sku: String(row.sku),
-    category: String(row.category),
-    quantity: Number(row.quantity) || 0,
-    purchasePrice: Number(row.purchasePrice) || 0,
-    tiedUpCapital: Number(row.tiedUpCapital) || 0,
-    quantitySold: Number(row.quantitySold) || 0,
-  }))
+
+  try {
+    const db = await getDb()
+    const cutoff = cutoffForRange(range)
+    const rows = await db.select<Record<string, unknown>[]>(
+      `SELECT
+         p.id AS productId,
+         p.name AS productName,
+         p.sku AS sku,
+         p.category AS category,
+         p.quantity AS quantity,
+         p.purchase_price AS purchasePrice,
+         ROUND(p.quantity * p.purchase_price, 2) AS tiedUpCapital,
+         COALESCE(sales_agg.total_sold, 0) AS quantitySold
+       FROM products p
+       LEFT JOIN (
+         SELECT si.product_id, SUM(si.quantity) AS total_sold
+         FROM sale_items si
+         JOIN sales s ON s.id = si.sale_id
+         WHERE s.created_at >= $1
+         GROUP BY si.product_id
+       ) sales_agg ON sales_agg.product_id = p.id
+       WHERE COALESCE(sales_agg.total_sold, 0) < 3
+       ORDER BY tiedUpCapital DESC`,
+      [cutoff]
+    )
+    return rows.map(row => ({
+      productId: String(row.productId),
+      productName: String(row.productName),
+      sku: String(row.sku),
+      category: String(row.category),
+      quantity: Number(row.quantity) || 0,
+      purchasePrice: Number(row.purchasePrice) || 0,
+      tiedUpCapital: Number(row.tiedUpCapital) || 0,
+      quantitySold: Number(row.quantitySold) || 0,
+    }))
+  } catch (error) {
+    // Degrade to an empty dead-stock report on a locked/busy database — see
+    // fetchProductAnalytics for the rationale.
+    logger.warn('fetchDeadStockAnalytics failed — returning no rows', {
+      error: String(error),
+      range,
+    })
+    return []
+  }
 }
 
 /**
@@ -1378,33 +1437,53 @@ export async function fetchHighestMarginProducts(): Promise<
   HighestMarginItem[]
 > {
   if (!isTauriRuntime()) return []
-  const db = await getDb()
-  const rows = await db.select<Record<string, unknown>[]>(
-    `SELECT
-       p.id AS productId,
-       p.name AS productName,
-       p.sku AS sku,
-       p.category AS category,
-       p.purchase_price AS purchasePrice,
-       p.selling_price AS sellingPrice,
-       ROUND(
-         ((p.selling_price - p.purchase_price) / NULLIF(p.selling_price, 0)) * 100,
-         1
-       ) AS profitMarginPercent
-     FROM products p
-     WHERE p.selling_price > 0
-     ORDER BY profitMarginPercent DESC
-     LIMIT 20`
-  )
-  return rows.map(row => ({
-    productId: String(row.productId),
-    productName: String(row.productName),
-    sku: String(row.sku),
-    category: String(row.category),
-    purchasePrice: Number(row.purchasePrice) || 0,
-    sellingPrice: Number(row.sellingPrice) || 0,
-    profitMarginPercent: Number(row.profitMarginPercent) || 0,
-  }))
+
+  try {
+    const db = await getDb()
+    const rows = await db.select<Record<string, unknown>[]>(
+      `SELECT
+         p.id AS productId,
+         p.name AS productName,
+         p.sku AS sku,
+         p.category AS category,
+         p.purchase_price AS purchasePrice,
+         p.selling_price AS sellingPrice,
+         ROUND(
+           ((p.selling_price - p.purchase_price) / NULLIF(p.selling_price, 0)) * 100,
+           1
+         ) AS profitMarginPercent
+       FROM products p
+       WHERE p.selling_price > 0
+       ORDER BY profitMarginPercent DESC
+       LIMIT 20`
+    )
+    return rows.map(row => ({
+      productId: String(row.productId),
+      productName: String(row.productName),
+      sku: String(row.sku),
+      category: String(row.category),
+      purchasePrice: Number(row.purchasePrice) || 0,
+      sellingPrice: Number(row.sellingPrice) || 0,
+      profitMarginPercent: Number(row.profitMarginPercent) || 0,
+    }))
+  } catch (error) {
+    // Same read-only degradation policy as the other analytics queries.
+    logger.warn('fetchHighestMarginProducts failed — returning no rows', {
+      error: String(error),
+    })
+    return []
+  }
+}
+
+/**
+ * Empty KPI payload — returned when the desktop runtime is unavailable or a
+ * query fails, so the Analytics dashboard renders zeros instead of crashing.
+ */
+const EMPTY_ANALYTICS_SUMMARY: AnalyticsSummary = {
+  totalUnitsSold: 0,
+  totalRevenue: 0,
+  totalProfit: 0,
+  deadStockValue: 0,
 }
 
 /**
@@ -1415,47 +1494,52 @@ export async function fetchHighestMarginProducts(): Promise<
 export async function fetchAnalyticsSummary(
   range: TimeRange
 ): Promise<AnalyticsSummary> {
-  if (!isTauriRuntime()) {
-    return {
-      totalUnitsSold: 0,
-      totalRevenue: 0,
-      totalProfit: 0,
-      deadStockValue: 0,
-    }
-  }
-  const db = await getDb()
-  const cutoff = cutoffForRange(range)
+  if (!isTauriRuntime()) return EMPTY_ANALYTICS_SUMMARY
 
-  const salesRow = await db.select<Record<string, unknown>[]>(
-    `SELECT
-       COALESCE(SUM(si.quantity), 0) AS totalUnitsSold,
-       COALESCE(SUM(si.total_price), 0) AS totalRevenue,
-       COALESCE(SUM(si.profit), 0) AS totalProfit
-     FROM sale_items si
-     JOIN sales s ON s.id = si.sale_id
-     WHERE s.created_at >= $1`,
-    [cutoff]
-  )
+  try {
+    const db = await getDb()
+    const cutoff = cutoffForRange(range)
 
-  const deadStockRow = await db.select<Record<string, unknown>[]>(
-    `SELECT COALESCE(SUM(p.quantity * p.purchase_price), 0) AS deadStockValue
-     FROM products p
-     LEFT JOIN (
-       SELECT si.product_id, SUM(si.quantity) AS total_sold
+    const salesRow = await db.select<Record<string, unknown>[]>(
+      `SELECT
+         COALESCE(SUM(si.quantity), 0) AS totalUnitsSold,
+         COALESCE(SUM(si.total_price), 0) AS totalRevenue,
+         COALESCE(SUM(si.profit), 0) AS totalProfit
        FROM sale_items si
        JOIN sales s ON s.id = si.sale_id
-       WHERE s.created_at >= $1
-       GROUP BY si.product_id
-     ) sales_agg ON sales_agg.product_id = p.id
-     WHERE COALESCE(sales_agg.total_sold, 0) < 3`,
-    [cutoff]
-  )
+       WHERE s.created_at >= $1`,
+      [cutoff]
+    )
 
-  return {
-    totalUnitsSold: Number(salesRow[0]?.totalUnitsSold) || 0,
-    totalRevenue: Number(salesRow[0]?.totalRevenue) || 0,
-    totalProfit: Number(salesRow[0]?.totalProfit) || 0,
-    deadStockValue: Number(deadStockRow[0]?.deadStockValue) || 0,
+    const deadStockRow = await db.select<Record<string, unknown>[]>(
+      `SELECT COALESCE(SUM(p.quantity * p.purchase_price), 0) AS deadStockValue
+       FROM products p
+       LEFT JOIN (
+         SELECT si.product_id, SUM(si.quantity) AS total_sold
+         FROM sale_items si
+         JOIN sales s ON s.id = si.sale_id
+         WHERE s.created_at >= $1
+         GROUP BY si.product_id
+       ) sales_agg ON sales_agg.product_id = p.id
+       WHERE COALESCE(sales_agg.total_sold, 0) < 3`,
+      [cutoff]
+    )
+
+    return {
+      totalUnitsSold: Number(salesRow[0]?.totalUnitsSold) || 0,
+      totalRevenue: Number(salesRow[0]?.totalRevenue) || 0,
+      totalProfit: Number(salesRow[0]?.totalProfit) || 0,
+      deadStockValue: Number(deadStockRow[0]?.deadStockValue) || 0,
+    }
+  } catch (error) {
+    // A locked/busy database (or a table missing on an older install) must not
+    // reject the Analytics loader — zeros are rendered and the real error is
+    // written to the logs for diagnostics.
+    logger.warn('fetchAnalyticsSummary failed — returning an empty summary', {
+      error: String(error),
+      range,
+    })
+    return EMPTY_ANALYTICS_SUMMARY
   }
 }
 

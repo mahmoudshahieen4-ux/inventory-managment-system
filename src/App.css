@@ -12,6 +12,22 @@ body,
   min-height: 100vh;
   margin: 0;
   padding: 0;
+
+  /* Desktop shell: elastic overscroll ("rubber banding") and pull-to-refresh
+     are browser affordances that feel broken inside a native window. */
+  overscroll-behavior: none !important;
+  overscroll-behavior-y: none !important;
+}
+
+/* The window itself is the fixed viewport: the document never scrolls — every
+   screen scrolls inside its own container, so the layout can never be dragged
+   out of position and text selection cannot spill across the chrome. */
+html,
+body {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  user-select: none;
 }
 
 #root {
@@ -191,6 +207,9 @@ body {
     height: auto !important;
     min-height: 0 !important;
     background: #fff !important;
+    /* The on-screen shell hides document overflow; printing must not clip a
+       multi-page thermal receipt, so the document flows freely again. */
+    overflow: visible !important;
   }
 
   #root,
