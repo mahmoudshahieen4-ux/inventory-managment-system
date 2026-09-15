@@ -35,7 +35,9 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 'lts/*'
+          # Pin to a stable LTS (Node 20) — 'lts/*' resolves to Node 24 and
+          # causes native toolchain/ABI warnings during the Tauri build.
+          node-version: '20'
           cache: 'pnpm'
 
       - name: Install Rust stable

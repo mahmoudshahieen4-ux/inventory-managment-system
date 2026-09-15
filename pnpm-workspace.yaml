@@ -1,2 +1,4 @@
 allowBuilds:
   '@ast-grep/cli': true
+  '@tailwindcss/oxide': true
+  esbuild: true

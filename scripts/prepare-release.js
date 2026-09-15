@@ -97,9 +97,9 @@ async function prepareRelease() {
     )
     console.log(`   ${oldTauriVersion} → ${cleanVersion}`)
 
-    // Run npm install to update lock files
+    // Run pnpm install to update pnpm-lock.yaml (matches CI and tauri.conf.json)
     console.log('\n📦 Updating lock files...')
-    exec('npm install', { silent: true })
+    exec('pnpm install', { silent: true })
     console.log('✅ Lock files updated')
 
     // Verify configurations
@@ -119,9 +119,9 @@ async function prepareRelease() {
       console.log('✅ Updater public key configured')
     }
 
-    // Final check that Rust code compiles
+    // Final check that Rust code compiles (cwd-based so it works on Windows too)
     console.log('\n🔍 Running final compilation check...')
-    exec('source ~/.cargo/env && cd src-tauri && cargo check')
+    exec('cargo check', { cwd: 'src-tauri' })
     console.log('✅ Rust compilation check passed')
 
     console.log(`\n🎉 Successfully prepared release ${tagVersion}!`)

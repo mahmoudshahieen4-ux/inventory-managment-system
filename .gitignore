@@ -25,3 +25,9 @@ jscpd-report
 *.njsproj
 *.sln
 *.sw?
+
+# Tauri updater signing keys — NEVER commit private keys to the repository.
+# Store them in GitHub Secrets only (TAURI_PRIVATE_KEY / TAURI_KEY_PASSWORD).
+*.key
+*.pem
+~/.tauri/
