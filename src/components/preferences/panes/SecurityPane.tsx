@@ -17,6 +17,7 @@ import {
 import { useAuthStore } from '@/store/useAuthStore'
 import { useUIStore } from '@/store/ui-store'
 import type { AuthErrorCode } from '@/types/auth'
+import { ChangePasswordModal } from '../ChangePasswordModal'
 import { SettingsField, SettingsSection } from '../shared/SettingsComponents'
 
 type SecurityError = AuthErrorCode | 'MISMATCH'
@@ -30,10 +31,7 @@ export function SecurityPane() {
   const currentUser = useAuthStore(state => state.currentUser)
   const users = useAuthStore(state => state.users)
 
-  const [currentPassword, setCurrentPassword] = useState('')
-  const [newPassword, setNewPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
-  const [isSavingOwn, setIsSavingOwn] = useState(false)
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false)
 
   const [targetUserId, setTargetUserId] = useState('')
   const [workerPassword, setWorkerPassword] = useState('')
@@ -50,30 +48,6 @@ export function SecurityPane() {
         ? t('preferences.security.toast.mismatch')
         : t(`auth.errors.${code}`)
     )
-  }
-
-  const handleChangeOwnPassword = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (newPassword !== confirmPassword) {
-      showError('MISMATCH')
-      return
-    }
-    setIsSavingOwn(true)
-    try {
-      const ok = await useAuthStore
-        .getState()
-        .changeOwnPassword(currentPassword, newPassword)
-      if (ok) {
-        toast.success(t('preferences.security.toast.passwordChanged'))
-        setCurrentPassword('')
-        setNewPassword('')
-        setConfirmPassword('')
-      } else {
-        showError(useAuthStore.getState().error?.code ?? 'DB_UNAVAILABLE')
-      }
-    } finally {
-      setIsSavingOwn(false)
-    }
   }
 
   const handleChangeWorkerPassword = async (
@@ -131,51 +105,15 @@ export function SecurityPane() {
       </SettingsSection>
 
       <SettingsSection title={t('preferences.security.own.title')}>
-        <form onSubmit={handleChangeOwnPassword} className="space-y-4">
-          <SettingsField label={t('preferences.security.own.current')}>
-            <Input
-              type="password"
-              dir="ltr"
-              autoComplete="current-password"
-              value={currentPassword}
-              onChange={event => setCurrentPassword(event.target.value)}
-              required
-            />
-          </SettingsField>
-          <SettingsField label={t('preferences.security.own.new')}>
-            <Input
-              type="password"
-              dir="ltr"
-              autoComplete="new-password"
-              value={newPassword}
-              onChange={event => setNewPassword(event.target.value)}
-              required
-            />
-          </SettingsField>
-          <SettingsField label={t('preferences.security.own.confirm')}>
-            <Input
-              type="password"
-              dir="ltr"
-              autoComplete="new-password"
-              value={confirmPassword}
-              onChange={event => setConfirmPassword(event.target.value)}
-              required
-            />
-          </SettingsField>
-          <Button
-            type="submit"
-            size="sm"
-            disabled={isSavingOwn}
-            className="gap-2"
-          >
-            {isSavingOwn ? (
-              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-            ) : (
-              <KeyRound className="size-4" aria-hidden="true" />
-            )}
-            {t('preferences.security.own.save')}
-          </Button>
-        </form>
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-2"
+          onClick={() => setIsChangePasswordOpen(true)}
+        >
+          <KeyRound className="size-4" aria-hidden="true" />
+          {t('preferences.security.own.open')}
+        </Button>
       </SettingsSection>
 
       {isAdmin && otherUsers.length > 0 && (
@@ -226,6 +164,11 @@ export function SecurityPane() {
           </form>
         </SettingsSection>
       )}
+
+      <ChangePasswordModal
+        open={isChangePasswordOpen}
+        onOpenChange={setIsChangePasswordOpen}
+      />
     </div>
   )
 }

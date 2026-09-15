@@ -225,8 +225,11 @@ with `DB_UNAVAILABLE`, leaving the login page unusable.
 - **Store contract**: async `hydrate()` loads stored rows on startup (seeding on
   first launch); mutations update local state first, then fire-and-forget the
   SQL write via the `persist()` helper — failures toast `db.toast.saveFailed`.
-- **Bootstrap**: `useAppBootstrap()` (mounted in `MainWindowContent`) runs both
-  `hydrate()`s while `useUIStore.isDbInitializing` shows a full-area spinner.
+- **Bootstrap**: `useAppBootstrap()` (mounted in `MainWindowContent`) runs all
+  `hydrate()`s (plus `cleanupOldSalesData`) while `useUIStore.isDbInitializing`
+  shows a full-area spinner. The batch is wrapped in
+  `withTimeout(…, BOOTSTRAP_TIMEOUT_MS)` (20 s — `src/lib/timeout.ts`), so a
+  task that never settles clears the spinner instead of freezing the UI forever.
 - **Schema**: `products`, `sales`, `sale_items` (see `db.ts` migrations); rows
   map snake_case ↔ camelCase at the boundary only.
 

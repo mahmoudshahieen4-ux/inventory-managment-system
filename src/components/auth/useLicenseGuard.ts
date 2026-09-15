@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 
 import { isTauriRuntime } from '@/services/db'
 import { getHardwareId } from '@/services/hardware-id'
+import { logger } from '@/lib/logger'
 import { useLicenseStore } from '@/store/useLicenseStore'
 
 /** License expiration re-check interval: 1 hour. */
@@ -20,10 +21,24 @@ export function useLicenseGuard(): void {
     let intervalId: number | undefined
     let cancelled = false
 
+    // The IIFE must never die silently: `initialized` only flips inside the
+    // store's initialize(), so a swallowed rejection here would leave the
+    // app stuck on the "loading database" screen forever.
     void (async () => {
-      const machineId = isTauriRuntime()
-        ? (await getHardwareId()).machineId
-        : undefined
+      // A failed fingerprint must not block initialization — continue with
+      // machineId undefined so the store initializes from the local record
+      // and simply skips the cloud reconciliation.
+      let machineId: string | undefined
+      if (isTauriRuntime()) {
+        try {
+          machineId = (await getHardwareId()).machineId
+        } catch (error) {
+          logger.warn(
+            '[license] hardware id unavailable — initializing without cloud sync',
+            { error }
+          )
+        }
+      }
       if (cancelled) return
 
       await useLicenseStore.getState().initialize(machineId)
@@ -33,7 +48,11 @@ export function useLicenseGuard(): void {
       intervalId = window.setInterval(() => {
         void useLicenseStore.getState().runExpirationCheck()
       }, LICENSE_CHECK_INTERVAL_MS)
-    })()
+    })().catch(error => {
+      logger.error('[license] startup license initialization crashed', {
+        error,
+      })
+    })
 
     return () => {
       cancelled = true

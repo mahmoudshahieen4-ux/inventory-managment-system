@@ -51,7 +51,9 @@ the session if the user still exists. `logout()` clears it.
 - `changeOwnPassword(current, next)` verifies the current password first.
 - `changeUserPassword(userId, next)` is ADMIN-only and does not require the
   old password (admin reset). Both persist to SQLite and update the store.
-- UI lives in Preferences → Security (`SecurityPane.tsx`); a logout button is
+- UI lives in Preferences → Security (`SecurityPane.tsx`): self-service change
+  opens `../ChangePasswordModal.tsx` (verify current password → new password
+  with confirmation); admins reset cashier passwords inline. A logout button is
   also available there and in the title bar (`UserSessionBadge`).
 
 ## Error Handling

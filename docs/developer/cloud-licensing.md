@@ -28,6 +28,8 @@ Never send business data to Supabase, and never let the client write to the
        │   ├─ compare UTC expires_at vs UTC now     (resolveLocalStatus)
        │   └─ saveLicense(merged)                   ← localLicenseRepository
        │       (offline → catch → local state kept, no crash)
+       │   (boot sync capped at CLOUD_SYNC_TIMEOUT_MS = 10 s — a fetch that
+       │    never settles resolves to OFFLINE instead of blocking unlock)
        └─ runExpirationCheck()  (hourly re-check + clock pulse)
 
  Connectivity restored
@@ -51,6 +53,15 @@ Never send business data to Supabase, and never let the client write to the
 `LicenseSyncOutcome` (`OFFLINE`, `SKIPPED`, `NO_SUBSCRIPTION`, `ERROR`) and
 the local record is kept. A lost connection can therefore never lock a paying
 customer out of already-granted access.
+
+The boot sync is additionally wrapped in
+`withTimeout(…, CLOUD_SYNC_TIMEOUT_MS)` (10 s — `src/lib/timeout.ts`): a fetch
+that never settles (supabase-js sets no network timeout) resolves to the
+`OFFLINE` outcome instead of stalling `initialize()` and leaving the app stuck
+on the "loading database" spinner forever. `useLicenseGuard` is also
+failure-proof: a rejected hardware-fingerprint call logs a warning and
+initializes from the local record (machineId `undefined` → cloud sync skipped),
+and the whole boot IIFE has a `.catch()` so no rejection is ever swallowed.
 
 ### Anti-tampering (clock rollback)
 

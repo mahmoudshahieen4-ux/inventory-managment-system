@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { saveCrashState } from '@/lib/recovery'
@@ -81,6 +82,104 @@ function SectionErrorFallback({
           {error.message}
         </pre>
       )}
+    </div>
+  )
+}
+
+/**
+ * Full-screen fallback for `variant="page"` (app root). Functional component
+ * so it can use `useTranslation()`. Never shows a white screen: a clear
+ * recovery screen with the error summary (visible in production — support
+ * teams need it), a copy-details action for bug reports, and reload/retry.
+ */
+function PageErrorFallback({
+  error,
+  onReload,
+  onReset,
+}: {
+  error?: Error
+  onReload: () => void
+  onReset: () => void
+}) {
+  const { t } = useTranslation()
+
+  const details = [
+    `time: ${new Date().toISOString()}`,
+    `userAgent: ${navigator.userAgent}`,
+    error ? `error: ${error.name}: ${error.message}` : 'error: unknown',
+    error?.stack ? `stack:\n${error.stack}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n')
+
+  const handleCopyDetails = async () => {
+    try {
+      await navigator.clipboard.writeText(details)
+      toast.success(t('errors.page.detailsCopied'))
+    } catch {
+      // Clipboard unavailable — the summary stays visible on screen.
+    }
+  }
+
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center bg-background p-8">
+      <div className="w-full max-w-md text-center">
+        <div className="mb-6">
+          <div className="bg-destructive/10 mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full">
+            <svg
+              className="text-destructive h-8 w-8"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.082 16.5c-.77.833.192 2.5 1.732 2.5z"
+              />
+            </svg>
+          </div>
+          <h1 className="text-foreground mb-2 text-2xl font-bold">
+            {t('errors.page.title')}
+          </h1>
+          <p className="text-muted-foreground mb-4">
+            {t('errors.page.description')}
+          </p>
+          {error && (
+            <p className="text-muted-foreground font-mono text-xs break-all">
+              {error.name}: {error.message}
+            </p>
+          )}
+        </div>
+
+        <div className="space-y-3">
+          <Button onClick={onReload} className="w-full">
+            {t('errors.page.reload')}
+          </Button>
+          <Button onClick={onReset} variant="outline" className="w-full">
+            {t('errors.page.retry')}
+          </Button>
+          <Button
+            onClick={handleCopyDetails}
+            variant="ghost"
+            className="w-full"
+          >
+            {t('errors.page.copyDetails')}
+          </Button>
+        </div>
+
+        {import.meta.env.DEV && error?.stack && (
+          <details className="mt-6 text-left">
+            <summary className="text-muted-foreground cursor-pointer text-sm hover:text-foreground">
+              Error Details (Development Only)
+            </summary>
+            <pre className="bg-muted text-muted-foreground mt-2 overflow-auto rounded-md p-3 font-mono text-xs whitespace-pre-wrap">
+              {error.stack}
+            </pre>
+          </details>
+        )}
+      </div>
     </div>
   )
 }
@@ -177,68 +276,11 @@ export class ErrorBoundary extends Component<Props, State> {
       }
 
       return (
-        <div className="flex min-h-screen flex-col items-center justify-center bg-background p-8">
-          <div className="w-full max-w-md text-center">
-            <div className="mb-6">
-              <div className="mx-auto mb-4 h-16 w-16 rounded-full bg-destructive/10 flex items-center justify-center">
-                <svg
-                  className="h-8 w-8 text-destructive"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.082 16.5c-.77.833.192 2.5 1.732 2.5z"
-                  />
-                </svg>
-              </div>
-              <h1 className="text-2xl font-bold text-foreground mb-2">
-                Something went wrong
-              </h1>
-              <p className="text-muted-foreground mb-6">
-                The application encountered an unexpected error. Your data has
-                been saved automatically.
-              </p>
-            </div>
-
-            <div className="space-y-3">
-              <button
-                onClick={this.handleReload}
-                className="w-full px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-              >
-                Reload Application
-              </button>
-
-              <button
-                onClick={this.handleReset}
-                className="w-full px-4 py-2 bg-secondary text-secondary-foreground rounded-md hover:bg-secondary/90 transition-colors"
-              >
-                Try Again
-              </button>
-            </div>
-
-            {import.meta.env.DEV && this.state.error && (
-              <details className="mt-6 text-left">
-                <summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground">
-                  Error Details (Development Only)
-                </summary>
-                <div className="mt-2 p-3 bg-muted rounded-md text-xs font-mono">
-                  <div className="text-destructive font-semibold mb-1">
-                    {this.state.error.name}: {this.state.error.message}
-                  </div>
-                  {this.state.error.stack && (
-                    <pre className="whitespace-pre-wrap text-muted-foreground overflow-auto">
-                      {this.state.error.stack}
-                    </pre>
-                  )}
-                </div>
-              </details>
-            )}
-          </div>
-        </div>
+        <PageErrorFallback
+          error={this.state.error}
+          onReload={this.handleReload}
+          onReset={this.handleReset}
+        />
       )
     }
 

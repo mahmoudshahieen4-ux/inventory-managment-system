@@ -62,7 +62,12 @@ let hardwareIdPromise: Promise<HardwareId> | null = null
 /** Returns (once, then cached) this machine's hardware fingerprint. */
 export function getHardwareId(): Promise<HardwareId> {
   if (!hardwareIdPromise) {
-    hardwareIdPromise = computeHardwareId()
+    // Reset the cache on rejection so a later caller can retry instead of
+    // being pinned to a permanently failed fingerprint.
+    hardwareIdPromise = computeHardwareId().catch(error => {
+      hardwareIdPromise = null
+      throw error
+    })
   }
   return hardwareIdPromise
 }

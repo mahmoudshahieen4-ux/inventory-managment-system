@@ -18,9 +18,13 @@ import {
   persistLicense,
 } from '@/services/db'
 import { getHardwareId } from '@/services/hardware-id'
-import { syncSubscriptionWithCloud } from '@/services/licenseSync'
+import {
+  syncSubscriptionWithCloud,
+  type LicenseSyncResult,
+} from '@/services/licenseSync'
 import { formatLicenseKey, validateLicenseKey } from '@/lib/license-key'
 import { logger } from '@/lib/logger'
+import { withTimeout } from '@/lib/timeout'
 import type { LicenseRecord, LicenseStatus } from '@/types/license'
 
 const t = i18n.t.bind(i18n)
@@ -32,6 +36,14 @@ export const EXPIRING_SOON_DAYS = 3
 /** Warn when the trial ends within this many days. */
 const TRIAL_EXPIRING_SOON_DAYS = 1
 const DAY_MS = 86_400_000
+
+/**
+ * Hard cap on the boot cloud sync: the Supabase fetch has no built-in
+ * timeout, and an unresponsive network must never block the app unlock
+ * (offline-first — the local record stays in charge until the sync answers;
+ * hourly checks and the 'online' listener re-run it later).
+ */
+export const CLOUD_SYNC_TIMEOUT_MS = 10_000
 
 /**
  * Whole number of days between `now` and `expiresAt`, rounded up to the nearest
@@ -241,7 +253,17 @@ export const useLicenseStore = create<LicenseState>()(
           // created before the first local launch — the cloud wins). The sync
           // is offline-safe: every failure keeps the local state untouched.
           if (machineId) {
-            const result = await syncSubscriptionWithCloud(machineId)
+            // Anti-hang: an unreachable cloud resolves to the OFFLINE outcome
+            // instead of blocking the unlock (see CLOUD_SYNC_TIMEOUT_MS).
+            const offlineFallback: LicenseSyncResult = {
+              outcome: 'OFFLINE',
+              record: null,
+            }
+            const result = await withTimeout(
+              syncSubscriptionWithCloud(machineId),
+              CLOUD_SYNC_TIMEOUT_MS,
+              { label: 'license cloud sync', fallback: offlineFallback }
+            )
             logger.debug('[license] cloud sync', { outcome: result.outcome })
             if (result.outcome === 'SYNCED') {
               const syncedRow = await fetchLicenseRow()

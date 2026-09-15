@@ -69,13 +69,36 @@ class Logger {
       this.logToConsole(entry)
     }
 
-    // In production, you could optionally send logs to Tauri backend
-    // This is commented out to keep it simple, but here's how you might do it:
-    /*
-    if (!this.isDevelopment && (level === 'warn' || level === 'error')) {
-      this.logToBackend(entry)
+    // Production diagnostics: forward informational+ levels to the Tauri log
+    // plugin (stdout / system logs) so field issues remain diagnosable.
+    this.logToTauriBackend(level, entry)
+  }
+
+  /**
+   * Forwards warn/error/info to the Tauri log plugin inside the desktop
+   * production runtime only. Lazy dynamic import keeps the browser dev server
+   * and unit tests untouched, and a missing plugin degrades silently to
+   * console-only logging.
+   */
+  private logToTauriBackend(level: LogLevel, entry: LogEntry): void {
+    if (this.isDevelopment || level === 'trace' || level === 'debug') return
+    if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
+      return
     }
-    */
+
+    const line = entry.context
+      ? `${entry.message} ${JSON.stringify(entry.context)}`
+      : entry.message
+
+    void import('@tauri-apps/plugin-log')
+      .then(plugin => {
+        if (level === 'error') return plugin.error(line)
+        if (level === 'warn') return plugin.warn(line)
+        return plugin.info(line)
+      })
+      .catch(() => {
+        // Plugin unavailable — console logging above is the fallback.
+      })
   }
 
   private logToConsole(entry: LogEntry): void {
@@ -102,22 +125,6 @@ class Logger {
         break
     }
   }
-
-  /*
-  // Optional: Send logs to Tauri backend for system logging
-  private async logToBackend(entry: LogEntry): Promise<void> {
-    try {
-      await invoke('log_from_frontend', {
-        level: entry.level,
-        message: entry.message,
-        timestamp: entry.timestamp.toISOString(),
-        context: entry.context,
-      })
-    } catch (error) {
-      console.warn('Failed to send log to backend:', error)
-    }
-  }
-  */
 }
 
 // Export a singleton logger instance

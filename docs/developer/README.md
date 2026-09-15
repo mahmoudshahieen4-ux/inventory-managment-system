@@ -53,9 +53,10 @@ Technical documentation for building and extending this app. These docs describe
 
 ## Release & Distribution
 
-| Document                  | Description                            |
-| ------------------------- | -------------------------------------- |
-| [Releases](./releases.md) | Release process, signing, auto-updates |
+| Document                      | Description                                                            |
+| ----------------------------- | ---------------------------------------------------------------------- |
+| [Releases](./releases.md)     | Release process, signing, auto-updates                                 |
+| [Production](./production.md) | Production readiness: DB location, auth, NSIS/WebView2, error handling |
 
 ---
 
