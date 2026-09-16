@@ -20,20 +20,25 @@ import type { CreditNote, ReturnItem, Sale } from '@/types/sales'
 export interface SalesState {
   /** Completed sales, newest first. */
   sales: Sale[]
+  /** True while a checkout is being committed — blocks double submission. */
+  isSubmitting: boolean
   /** Next invoice sequence number — seeded from DB MAX on hydrate to avoid collisions. */
   _nextInvoiceSeq: number
   /** Next credit-note sequence number — seeded from DB MAX on hydrate. */
   _nextCreditNoteSeq: number
   /**
    * Atomic checkout: records the sale and applies the inventory stock
-   * decrements inside one SQLite transaction. The in-memory sales list is
-   * updated immediately; stock deltas are applied by the caller via
-   * `useInventoryStore.applyStockDeltas` (already persisted atomically).
+   * decrements inside one SQLite transaction. Persistence is awaited and the
+   * sale is only added to the in-memory list after the commit succeeds, so a
+   * failed write leaves no phantom invoice; stock deltas are applied by the
+   * caller via `useInventoryStore.applyStockDeltas`. Returns `null` when the
+   * write failed (the error toast is raised here) or when another checkout is
+   * already in flight.
    */
-  addSaleAtomic: (
+  submitSale: (
     sale: Omit<Sale, 'id' | 'createdAt' | 'invoiceNumber'>,
     stockUpdates: StockUpdate[]
-  ) => Sale
+  ) => Promise<Sale | null>
   /** Retrieves a stored invoice by id, for re-printing from sales history. */
   getSaleById: (id: string) => Sale | undefined
   /** Loads stored invoices from SQLite into the store. */
@@ -42,7 +47,8 @@ export interface SalesState {
   createCreditNote: (
     sale: Sale,
     items: ReturnItem[],
-    cashierId: string
+    cashierId: string,
+    stockUpdates?: StockUpdate[]
   ) => CreditNote
   returnedQuantity: (saleId: string, productId: string) => number
 }
@@ -52,12 +58,16 @@ export const useSalesStore = create<SalesState>()(
     (set, get) => ({
       sales: [],
       creditNotes: [],
+      isSubmitting: false,
       _nextInvoiceSeq: 1,
       _nextCreditNoteSeq: 1,
 
       getSaleById: id => get().sales.find(sale => sale.id === id),
 
-      addSaleAtomic: (sale, stockUpdates) => {
+      submitSale: async (sale, stockUpdates) => {
+        // Double-click / repeated F2 guard: one checkout at a time.
+        if (get().isSubmitting) return null
+
         // Use the DB-seeded sequence counter — safe after pruning/cleanup.
         const seq = get()._nextInvoiceSeq
         const record: Sale = {
@@ -66,21 +76,31 @@ export const useSalesStore = create<SalesState>()(
           createdAt: new Date().toISOString(),
           invoiceNumber: `INV-${String(seq).padStart(4, '0')}`,
         }
-        set(
-          state => ({
-            sales: [record, ...state.sales],
-            _nextInvoiceSeq: state._nextInvoiceSeq + 1,
-          }),
-          undefined,
-          'sales/addSaleAtomic'
-        )
-        // Invoice + item lines + stock decrement commit in ONE transaction.
-        if (isTauriRuntime()) {
-          persistSaleAtomic(record, stockUpdates).catch(error => {
-            toast.error(`${i18n.t('db.toast.saveFailed')}: ${String(error)}`)
-          })
+
+        set({ isSubmitting: true }, undefined, 'sales/submitStart')
+        try {
+          // Invoice + item lines + stock decrement commit in ONE transaction.
+          if (isTauriRuntime()) {
+            await persistSaleAtomic(record, stockUpdates)
+          }
+          // Only after a successful commit: publish the invoice and advance
+          // the sequence, so a failed write can never show a phantom sale.
+          set(
+            state => ({
+              sales: [record, ...state.sales],
+              _nextInvoiceSeq: state._nextInvoiceSeq + 1,
+            }),
+            undefined,
+            'sales/submitSale'
+          )
+          return record
+        } catch (error) {
+          // Gentle failure: the cart is kept intact so the cashier can retry.
+          toast.error(`${i18n.t('db.toast.saveFailed')}: ${String(error)}`)
+          return null
+        } finally {
+          set({ isSubmitting: false }, undefined, 'sales/submitEnd')
         }
-        return record
       },
 
       returnedQuantity: (saleId, productId) =>
@@ -90,7 +110,7 @@ export const useSalesStore = create<SalesState>()(
           .filter(item => item.productId === productId)
           .reduce((total, item) => total + item.quantity, 0),
 
-      createCreditNote: (sale, items, cashierId) => {
+      createCreditNote: (sale, items, cashierId, stockUpdates = []) => {
         const seq = get()._nextCreditNoteSeq
         const record: CreditNote = {
           id: crypto.randomUUID(),
@@ -113,7 +133,9 @@ export const useSalesStore = create<SalesState>()(
           'sales/createCreditNote'
         )
         if (isTauriRuntime()) {
-          persistCreditNote(record).catch(error => {
+          // Credit note + items + stock restock commit in ONE transaction;
+          // a failure here cannot leave inventory out of sync with the note.
+          persistCreditNote(record, stockUpdates).catch(error => {
             toast.error(`${i18n.t('db.toast.saveFailed')}: ${String(error)}`)
           })
         }

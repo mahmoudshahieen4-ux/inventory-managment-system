@@ -96,8 +96,10 @@ export function POSScreen() {
       toast.info(t('pos.toast.cartCleared'))
     },
     onPrintReceipt: () => {
-      // Printing is only meaningful while the receipt modal is open.
-      if (receiptOpen) window.print()
+      // Printing is only meaningful while the receipt modal is open — and never
+      // while a checkout is still committing (a held F12 must not queue prints
+      // for a receipt that is not on screen yet).
+      if (receiptOpen && !useSalesStore.getState().isSubmitting) window.print()
     },
   })
 
@@ -169,14 +171,15 @@ export function POSScreen() {
         sale={returnSale}
         open={returnOpen}
         onOpenChange={setReturnOpen}
-        onComplete={(items: ReturnItem[]) => {
+        onComplete={(items: ReturnItem[], stockUpdates) => {
           if (!returnSale) return
           const note = useSalesStore
             .getState()
             .createCreditNote(
               returnSale,
               items,
-              useAuthStore.getState().currentUser?.displayName ?? 'cashier'
+              useAuthStore.getState().currentUser?.displayName ?? 'cashier',
+              stockUpdates
             )
           setCreditNote(note)
           setCreditNoteOpen(true)

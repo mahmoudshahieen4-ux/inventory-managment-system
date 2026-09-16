@@ -98,8 +98,11 @@ export function StockInModal({
   product = null,
 }: StockInModalProps) {
   const { t } = useTranslation()
-  const { onFocus: onQtyFocus, onMouseUp: onMouseUpQty } =
-    useAutoSelectOnFocus()
+  const {
+    onFocus: onQtyFocus,
+    onMouseUp: onMouseUpQty,
+    onWheel,
+  } = useAutoSelectOnFocus()
   const products = useInventoryStore(state => state.products)
   const addStock = useInventoryStore(state => state.addStock)
 
@@ -333,6 +336,7 @@ export function StockInModal({
                     onChange={handleQuantityChange}
                     onFocus={onQtyFocus}
                     onMouseUp={onMouseUpQty}
+                    onWheel={onWheel}
                     aria-invalid={invalid}
                     aria-describedby={describedBy}
                     placeholder={t('inventory.stockIn.quantityPlaceholder')}
@@ -357,6 +361,9 @@ export function StockInModal({
                     min={0}
                     step={0.01}
                     value={costPrice}
+                    onFocus={onQtyFocus}
+                    onMouseUp={onMouseUpQty}
+                    onWheel={onWheel}
                     onChange={handleCostChange}
                     aria-invalid={invalid}
                     aria-describedby={describedBy}

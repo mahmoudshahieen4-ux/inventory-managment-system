@@ -103,11 +103,29 @@ describe('useAutoSelectOnFocus', () => {
   })
 
   it('selects the input content on focus (deferred one frame)', async () => {
+    // The deferred select() only runs when the input really is the
+    // activeElement, so focus it for real (as the browser would).
+    input.focus()
     const selectSpy = vi.spyOn(input, 'select')
 
     const { onFocus } = useAutoSelectOnFocus()
     onFocus({ target: input } as React.FocusEvent<HTMLInputElement>)
 
     await vi.waitFor(() => expect(selectSpy).toHaveBeenCalledOnce())
+  })
+
+  it('does NOT select when the value changed between focus and the frame (fast typing)', async () => {
+    input.focus()
+    const selectSpy = vi.spyOn(input, 'select')
+
+    const { onFocus } = useAutoSelectOnFocus()
+    onFocus({ target: input } as React.FocusEvent<HTMLInputElement>)
+    // The user manages to type before the deferred frame runs —
+    // the hook must never wipe/replace that fresh input with a selection.
+    input.value = '7'
+
+    await new Promise(resolve => requestAnimationFrame(resolve))
+    await Promise.resolve()
+    expect(selectSpy).not.toHaveBeenCalled()
   })
 })

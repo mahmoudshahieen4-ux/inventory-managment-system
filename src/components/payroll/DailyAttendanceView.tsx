@@ -54,8 +54,11 @@ function AttendanceRow({
   lockReason,
 }: AttendanceRowProps) {
   const { t } = useTranslation()
-  const { onFocus: onQtyFocus, onMouseUp: onMouseUpQty } =
-    useAutoSelectOnFocus()
+  const {
+    onFocus: onQtyFocus,
+    onMouseUp: onMouseUpQty,
+    onWheel,
+  } = useAutoSelectOnFocus()
   const recordAttendance = usePayrollStore(state => state.recordAttendance)
   const addAdvance = usePayrollStore(state => state.addAdvance)
   const [status, setStatus] = useState<AttendanceStatus>(
@@ -169,6 +172,7 @@ function AttendanceRow({
           value={deduction}
           onFocus={onQtyFocus}
           onMouseUp={onMouseUpQty}
+          onWheel={onWheel}
           onChange={event => setDeduction(event.target.value)}
           placeholder="0.00"
           disabled={locked}
@@ -189,6 +193,7 @@ function AttendanceRow({
             value={advance}
             onFocus={onQtyFocus}
             onMouseUp={onMouseUpQty}
+            onWheel={onWheel}
             onChange={event => setAdvance(event.target.value)}
             placeholder="0.00"
             disabled={locked}

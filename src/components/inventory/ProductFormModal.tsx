@@ -197,8 +197,11 @@ export function ProductFormModal({
   product = null,
 }: ProductFormModalProps) {
   const { t } = useTranslation()
-  const { onFocus: onQtyFocus, onMouseUp: onMouseUpQty } =
-    useAutoSelectOnFocus()
+  const {
+    onFocus: onQtyFocus,
+    onMouseUp: onMouseUpQty,
+    onWheel,
+  } = useAutoSelectOnFocus()
   const addProduct = useInventoryStore(state => state.addProduct)
   const updateProduct = useInventoryStore(state => state.updateProduct)
   const products = useInventoryStore(state => state.products)
@@ -390,6 +393,7 @@ export function ProductFormModal({
                 value={values.quantity}
                 onFocus={onQtyFocus}
                 onMouseUp={onMouseUpQty}
+                onWheel={onWheel}
                 onChange={setField('quantity')}
               />
             )}
@@ -411,6 +415,7 @@ export function ProductFormModal({
                 value={values.minThreshold}
                 onFocus={onQtyFocus}
                 onMouseUp={onMouseUpQty}
+                onWheel={onWheel}
                 onChange={setField('minThreshold')}
               />
             )}

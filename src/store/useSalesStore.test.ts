@@ -18,6 +18,7 @@ describe('useSalesStore', () => {
   beforeEach(() => {
     useSalesStore.setState({
       sales: [],
+      isSubmitting: false,
       _nextInvoiceSeq: 1,
       _nextCreditNoteSeq: 1,
     })
@@ -27,8 +28,8 @@ describe('useSalesStore', () => {
     expect(useSalesStore.getState().sales).toEqual([])
   })
 
-  it('records a sale with a generated id, invoice number and timestamp', () => {
-    const sale = useSalesStore.getState().addSaleAtomic(
+  it('records a sale with a generated id, invoice number and timestamp', async () => {
+    const sale = await useSalesStore.getState().submitSale(
       {
         items,
         subtotal: 4.98,
@@ -38,17 +39,20 @@ describe('useSalesStore', () => {
       },
       []
     )
+    if (!sale) throw new Error('checkout did not return the recorded sale')
 
     expect(sale.id).toBeTruthy()
     expect(sale.invoiceNumber).toBe('INV-0001')
     expect(Number.isNaN(Date.parse(sale.createdAt))).toBe(false)
     expect(sale.items).toEqual(items)
     expect(useSalesStore.getState().sales).toEqual([sale])
+    // The loading flag never sticks after a settled checkout.
+    expect(useSalesStore.getState().isSubmitting).toBe(false)
   })
 
-  it('assigns sequential invoice numbers and prepends newer sales', () => {
-    const { addSaleAtomic } = useSalesStore.getState()
-    const first = addSaleAtomic(
+  it('assigns sequential invoice numbers and prepends newer sales', async () => {
+    const { submitSale } = useSalesStore.getState()
+    const first = await submitSale(
       {
         items,
         subtotal: 4.98,
@@ -58,7 +62,7 @@ describe('useSalesStore', () => {
       },
       []
     )
-    const second = addSaleAtomic(
+    const second = await submitSale(
       {
         items,
         subtotal: 4.98,
@@ -68,6 +72,7 @@ describe('useSalesStore', () => {
       },
       []
     )
+    if (!first || !second) throw new Error('checkout did not record the sale')
 
     expect(first.invoiceNumber).toBe('INV-0001')
     expect(second.invoiceNumber).toBe('INV-0002')
@@ -78,9 +83,9 @@ describe('useSalesStore', () => {
     expect(sales.at(1)?.id).toBe(first.id)
   })
 
-  it('retrieves a stored invoice by id for re-printing', () => {
-    const { addSaleAtomic } = useSalesStore.getState()
-    const sale = addSaleAtomic(
+  it('retrieves a stored invoice by id for re-printing', async () => {
+    const { submitSale } = useSalesStore.getState()
+    const sale = await submitSale(
       {
         items,
         subtotal: 4.98,
@@ -90,6 +95,7 @@ describe('useSalesStore', () => {
       },
       []
     )
+    if (!sale) throw new Error('checkout did not record the sale')
 
     expect(useSalesStore.getState().getSaleById(sale.id)).toEqual(sale)
   })

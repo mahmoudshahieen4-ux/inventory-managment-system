@@ -41,9 +41,24 @@ export function useAutoSelectOnFocus() {
   const onFocus = (event: React.FocusEvent<HTMLInputElement>) => {
     const input = event.target
     // تأخير قصير لضبط التحديد بعد أي معالجة افتراضية من المتصفح
+    const valueAtFocus = input.value
     requestAnimationFrame(() => {
+      // لا تحدد إذا انتقل التركيز لحقل آخر، أو إذا تغيّرت القيمة بين
+      // التركيز وهذا الإطار (كتابة سريعة) — لا يجوز مسح ما كتبه المستخدم.
+      if (document.activeElement !== input || input.value !== valueAtFocus) {
+        return
+      }
       input.select()
     })
+  }
+
+  /**
+   * إيقاف تغيّر قيمة الحقل عند التمرير بعجلة الماوس أو لوحة اللمس
+   * (Touchpad): نُخرج الحقل من التركيز فلا يستقبل حدث wheel أصلاً —
+   * القيمة تبقى كما كتبها المستخدم والتمرير يبقى للصفحة.
+   */
+  const onWheel = (event: React.WheelEvent<HTMLInputElement>) => {
+    event.currentTarget.blur()
   }
 
   /**
@@ -65,5 +80,5 @@ export function useAutoSelectOnFocus() {
     event.preventDefault()
   }
 
-  return { onFocus, onMouseUp }
+  return { onFocus, onMouseUp, onWheel }
 }

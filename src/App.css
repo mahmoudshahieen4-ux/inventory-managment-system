@@ -4,6 +4,19 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Hide the native number-input spin buttons (the white up/down arrows):
+   all quantity fields use dedicated +/- buttons instead, and the native
+   spinners collide with the custom controls and look broken in RTL. */
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
 html,
 body,
 #root {

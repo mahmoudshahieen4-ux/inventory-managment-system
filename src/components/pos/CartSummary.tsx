@@ -1,4 +1,4 @@
-import { Minus, Plus, ShoppingCart, Trash2 } from 'lucide-react'
+import { Loader2, Minus, Plus, ShoppingCart, Trash2 } from 'lucide-react'
 import type { ChangeEvent } from 'react'
 import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -40,23 +40,30 @@ interface CartSummaryProps {
 /** Right POS pane: current sale lines, quantity controls, totals and checkout. */
 export function CartSummary({ onCheckoutComplete }: CartSummaryProps) {
   const { t } = useTranslation()
-  const { onFocus: onQtyFocus, onMouseUp: onMouseUpQty } =
-    useAutoSelectOnFocus()
+  const {
+    onFocus: onQtyFocus,
+    onMouseUp: onMouseUpQty,
+    onWheel,
+  } = useAutoSelectOnFocus()
 
   const products = useInventoryStore(state => state.products)
   const cartItems = useCartStore(state => state.items)
   const subtotal = useCartStore(selectCartSubtotal)
   const tax = useCartStore(selectCartTax)
   const total = useCartStore(selectCartTotal)
+  /** True while the checkout transaction is committing — locks the buttons. */
+  const isSubmitting = useSalesStore(state => state.isSubmitting)
 
   const handleClearCart = () => {
     useCartStore.getState().clearCart()
     toast.info(t('pos.toast.cartCleared'))
   }
 
-  const handleCheckout = () => {
+  const handleCheckout = async () => {
     const { items } = useCartStore.getState()
     if (items.length === 0) return
+    // Guard against a double click or a repeated F2 while a commit is in flight.
+    if (useSalesStore.getState().isSubmitting) return
 
     // 1. Compute the post-sale stock for every line (clamped at zero).
     const currentProducts = useInventoryStore.getState().products
@@ -71,7 +78,8 @@ export function CartSummary({ onCheckoutComplete }: CartSummaryProps) {
     }
 
     // 2. Record the completed sale — invoice + line items + stock decrements
-    //    commit in ONE SQLite transaction (atomic checkout).
+    //    commit in ONE SQLite transaction and are awaited here, so the checkout
+    //    button stays locked until the commit settles.
     const saleItems: SaleItem[] = items.map(item => ({
       ...item,
       lineTotal: roundMoney(item.unitPrice * item.quantity),
@@ -80,7 +88,7 @@ export function CartSummary({ onCheckoutComplete }: CartSummaryProps) {
       ),
     }))
     const cartState = useCartStore.getState()
-    const sale = useSalesStore.getState().addSaleAtomic(
+    const sale = await useSalesStore.getState().submitSale(
       {
         items: saleItems,
         subtotal: selectCartSubtotal(cartState),
@@ -93,6 +101,10 @@ export function CartSummary({ onCheckoutComplete }: CartSummaryProps) {
       },
       stockUpdates
     )
+
+    // The store already toasted the failure and left the cart untouched, so
+    // nothing may be mirrored or cleared here.
+    if (!sale) return
 
     // 3. Mirror the new quantities into the UI state (already persisted
     //    atomically — no per-product writes here).
@@ -200,6 +212,7 @@ export function CartSummary({ onCheckoutComplete }: CartSummaryProps) {
                         className="border-input bg-background text-foreground h-7 w-14 rounded-md border text-center text-sm font-medium outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px]"
                         onFocus={onQtyFocus}
                         onMouseUp={onMouseUpQty}
+                        onWheel={onWheel}
                         onChange={event =>
                           handleQuantityChange(item.productId, stock, event)
                         }
@@ -257,18 +270,22 @@ export function CartSummary({ onCheckoutComplete }: CartSummaryProps) {
             <Button
               variant="outline"
               className="flex-1"
-              disabled={cartItems.length === 0}
+              disabled={cartItems.length === 0 || isSubmitting}
               onClick={handleClearCart}
             >
               {t('pos.cart.clearCart')}
             </Button>
             <Button
               className="flex-[2]"
-              disabled={cartItems.length === 0}
+              disabled={cartItems.length === 0 || isSubmitting}
               onClick={handleCheckout}
             >
-              <ShoppingCart className="size-4" />
-              {t('pos.cart.checkout')}
+              {isSubmitting ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <ShoppingCart className="size-4" />
+              )}
+              {isSubmitting ? t('pos.cart.processing') : t('pos.cart.checkout')}
             </Button>
           </div>
         </div>

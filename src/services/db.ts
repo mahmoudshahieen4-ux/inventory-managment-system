@@ -69,8 +69,56 @@ async function applySqlitePragmas(db: Database): Promise<void> {
   }
 }
 
-/** Opens (once) the SQLite connection and ensures the schema exists. */
-function getDb(): Promise<Database> {
+/* ------------------------------------------------------------------ */
+/* Connection & statement serialization                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The plugin draws statements from a sqlx pool and acquires a connection **per
+ * statement**, so a `BEGIN` / `COMMIT` pair issued as separate calls is not
+ * guaranteed to land on the same connection as the statements in between. That
+ * is what surfaced as `cannot start a transaction within a transaction`: a
+ * `BEGIN` whose `COMMIT` ran elsewhere stayed open on one pooled connection,
+ * and the next `BEGIN` was handed that very connection.
+ *
+ * Two rules keep multi-statement writes safe:
+ * 1. every statement runs through the single-flight queue (`runExclusive`), so
+ *    at most one statement is ever in flight and the pool never needs a second
+ *    connection;
+ * 2. a transaction holds the queue for its whole `BEGIN … COMMIT` window and
+ *    runs its statements on the raw handle handed to `work`, so nothing can
+ *    slip in between — while everyone else waits in line.
+ */
+let dbQueue: Promise<unknown> = Promise.resolve()
+/** Raw handle of the transaction currently holding the queue (null when idle). */
+let activeTransactionDb: Database | null = null
+/** Cached serialized handle (see `getDb`). */
+let serializedDbPromise: Promise<Database> | null = null
+
+const swallow = (): undefined => undefined
+
+/** Runs `task` as the only database work in flight, in call order. */
+function runExclusive<T>(task: () => Promise<T>): Promise<T> {
+  const run = dbQueue.then(() => task())
+  // Keep the queue alive after a failure so one bad statement never blocks the
+  // statements that follow it.
+  dbQueue = run.then(swallow, swallow)
+  return run
+}
+
+/** Wraps a connection so every statement joins the single-flight queue. */
+function serialize(db: Database): Database {
+  return {
+    execute: (query: string, bindValues?: unknown[]) =>
+      runExclusive(() => db.execute(query, bindValues)),
+    select: <T>(query: string, bindValues?: unknown[]) =>
+      runExclusive(() => db.select<T>(query, bindValues)),
+    close: () => db.close(),
+  } as unknown as Database
+}
+
+/** Opens (once) the raw SQLite connection and ensures the schema exists. */
+function loadDb(): Promise<Database> {
   if (!dbPromise) {
     dbPromise = Database.load(DB_URL).then(async db => {
       await applySqlitePragmas(db)
@@ -363,6 +411,21 @@ function getDb(): Promise<Database> {
   return dbPromise
 }
 
+/**
+ * Serialized handle to the single SQLite connection: one statement at a time,
+ * which is what makes `BEGIN … COMMIT` pairs land on the same connection.
+ */
+function getDb(): Promise<Database> {
+  if (!serializedDbPromise) {
+    serializedDbPromise = loadDb().then(serialize)
+    // Allow a retry after a failed startup instead of caching a rejected promise.
+    serializedDbPromise.catch(() => {
+      serializedDbPromise = null
+    })
+  }
+  return serializedDbPromise
+}
+
 /** Ensures the connection and schema exist before any query runs. */
 export async function initializeDatabase(): Promise<void> {
   await getDb()
@@ -585,79 +648,80 @@ interface SaleItemRow {
   profit: number
 }
 
-/**
- * Runs `work` inside a single SQLite transaction (`BEGIN IMMEDIATE` /
- * `COMMIT`, with `ROLLBACK` on any failure) so multi-step writes either
- * fully apply or leave no trace — a crash mid-checkout can never persist a
- * half-written invoice.
- *
- * The plugin draws statements from a sqlx pool (up to 10 connections), and
- * `BEGIN`/`COMMIT` must land on the SAME connection as the statements between
- * them. Our awaits are sequential, but a concurrent caller (e.g. a hydrate
- * racing a checkout) could otherwise grab a second pooled connection
- * mid-transaction — so every transaction is chained onto one promise.
- */
-let transactionChain: Promise<unknown> = Promise.resolve()
+/** True for SQLite's "a transaction is already open on this connection" error. */
+function isNestedTransactionError(error: unknown): boolean {
+  return String(error).includes('within a transaction')
+}
 
+/**
+ * Opens the write transaction, healing a leaked one first: when a `BEGIN`
+ * lands on a connection that still has an open transaction, SQLite answers
+ * `cannot start a transaction within a transaction`. Rolling back once and
+ * retrying turns that stale state into a clean start instead of a failed
+ * checkout.
+ */
+async function beginTransaction(db: Database): Promise<void> {
+  try {
+    await db.execute('BEGIN IMMEDIATE')
+  } catch (error) {
+    if (!isNestedTransactionError(error)) throw error
+    logger.warn('Rolling back a transaction left open on the connection')
+    await db.execute('ROLLBACK').catch(() => undefined)
+    await db.execute('BEGIN IMMEDIATE')
+  }
+}
+
+/**
+ * Runs `work` inside ONE SQLite transaction (`BEGIN IMMEDIATE` / `COMMIT`, with
+ * `ROLLBACK` on any failure) so multi-step writes either fully apply or leave
+ * no trace — a crash mid-checkout can never persist a half-written invoice.
+ *
+ * The whole block holds the statement queue, so no other statement can slip
+ * between `BEGIN` and `COMMIT` and steal a second pooled connection. `work`
+ * receives the raw handle: its statements belong to the open transaction, while
+ * concurrent callers (reads, other writes) stay queued until it commits. A
+ * nested call — a transactional helper invoked from inside another transaction
+ * — joins the open transaction instead of issuing a second `BEGIN`.
+ */
 async function withTransaction<T>(
   work: (db: Database) => Promise<T>
 ): Promise<T> {
-  const run = transactionChain.then(async () => {
-    const db = await getDb()
-    await db.execute('BEGIN IMMEDIATE')
+  if (activeTransactionDb) {
+    // Already inside a transaction on this connection: participate in it.
+    return work(activeTransactionDb)
+  }
+
+  return runExclusive(async () => {
+    const db = await loadDb()
+    activeTransactionDb = db
     try {
-      const result = await work(db)
-      await db.execute('COMMIT')
-      return result
-    } catch (error) {
-      // Never mask the original error if the rollback itself fails.
-      await db.execute('ROLLBACK').catch(() => undefined)
-      throw error
+      await beginTransaction(db)
+      try {
+        const result = await work(db)
+        await db.execute('COMMIT')
+        return result
+      } catch (error) {
+        // Never mask the original error if the rollback itself fails.
+        await db.execute('ROLLBACK').catch(() => undefined)
+        throw error
+      }
+    } finally {
+      activeTransactionDb = null
     }
   })
-  // Keep the chain alive even when a transaction fails.
-  transactionChain = run.catch(() => undefined)
-  return run
 }
 
 /**
  * Inserts the invoice header and its item lines inside a single SQLite
  * transaction — a crash mid-write can never leave line items without their
  * invoice or an invoice without its lines.
+ *
+ * Thin alias of `persistSaleAtomic` with no stock moves: ONE implementation,
+ * ONE duplicate-id guard and ONE `BEGIN … COMMIT` per invoice, so a checkout
+ * can never open two transactions for the same sale.
  */
 export async function persistSale(sale: Sale): Promise<void> {
-  await withTransaction(async db => {
-    await db.execute(
-      'INSERT INTO sales (id, invoice_number, subtotal, tax, total_amount, total_profit, cashier_name, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-      [
-        sale.id,
-        sale.invoiceNumber,
-        sale.subtotal,
-        sale.tax,
-        sale.total,
-        sale.totalProfit ?? 0,
-        sale.cashierId,
-        sale.createdAt,
-      ]
-    )
-    for (const item of sale.items) {
-      await db.execute(
-        'INSERT INTO sale_items (id, sale_id, product_id, product_name, sku, quantity, purchase_price, unit_price, total_price, profit) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
-        [
-          crypto.randomUUID(),
-          sale.id,
-          item.productId,
-          item.name,
-          item.sku ?? '',
-          item.quantity,
-          item.purchasePrice ?? 0,
-          item.unitPrice,
-          item.lineTotal,
-          item.profit ?? 0,
-        ]
-      )
-    }
-  })
+  await persistSaleAtomic(sale, [])
 }
 
 /** Absolute post-sale quantity for one product (already clamped >= 0). */
@@ -697,6 +761,14 @@ function toStockTransaction(row: StockTransactionRow): StockTransaction {
 }
 
 /**
+ * Invoice ids already committed (or mid-commit) during this session. A second
+ * submission for the same invoice is ignored instead of opening a second
+ * transaction for it (double-clicked checkout button, repeated F2, or a
+ * `persistSale` / `persistSaleAtomic` race for the same record).
+ */
+const committedSaleIds = new Set<string>()
+
+/**
  * Atomically records a sale AND applies the inventory decrement: invoice
  * header + line items + stock updates commit together or not at all, so a
  * crash between "save invoice" and "decrement stock" can never desynchronize
@@ -706,44 +778,60 @@ export async function persistSaleAtomic(
   sale: Sale,
   stockUpdates: StockUpdate[]
 ): Promise<void> {
-  await withTransaction(async db => {
-    await db.execute(
-      'INSERT INTO sales (id, invoice_number, subtotal, tax, total_amount, total_profit, cashier_name, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-      [
-        sale.id,
-        sale.invoiceNumber,
-        sale.subtotal,
-        sale.tax,
-        sale.total,
-        sale.totalProfit ?? 0,
-        sale.cashierId,
-        sale.createdAt,
-      ]
-    )
-    for (const item of sale.items) {
+  if (committedSaleIds.has(sale.id)) {
+    logger.warn('Ignoring a duplicate submission for the same invoice', {
+      invoiceNumber: sale.invoiceNumber,
+    })
+    return
+  }
+  // Reserve the invoice before the transaction so a concurrent duplicate
+  // cannot slip in while this one is still committing.
+  committedSaleIds.add(sale.id)
+
+  try {
+    await withTransaction(async db => {
       await db.execute(
-        'INSERT INTO sale_items (id, sale_id, product_id, product_name, sku, quantity, purchase_price, unit_price, total_price, profit) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
+        'INSERT INTO sales (id, invoice_number, subtotal, tax, total_amount, total_profit, cashier_name, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
         [
-          crypto.randomUUID(),
           sale.id,
-          item.productId,
-          item.name,
-          item.sku ?? '',
-          item.quantity,
-          item.purchasePrice ?? 0,
-          item.unitPrice,
-          item.lineTotal,
-          item.profit ?? 0,
+          sale.invoiceNumber,
+          sale.subtotal,
+          sale.tax,
+          sale.total,
+          sale.totalProfit ?? 0,
+          sale.cashierId,
+          sale.createdAt,
         ]
       )
-    }
-    for (const update of stockUpdates) {
-      await db.execute('UPDATE products SET quantity = $1 WHERE id = $2', [
-        update.newQuantity,
-        update.productId,
-      ])
-    }
-  })
+      for (const item of sale.items) {
+        await db.execute(
+          'INSERT INTO sale_items (id, sale_id, product_id, product_name, sku, quantity, purchase_price, unit_price, total_price, profit) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
+          [
+            crypto.randomUUID(),
+            sale.id,
+            item.productId,
+            item.name,
+            item.sku ?? '',
+            item.quantity,
+            item.purchasePrice ?? 0,
+            item.unitPrice,
+            item.lineTotal,
+            item.profit ?? 0,
+          ]
+        )
+      }
+      for (const update of stockUpdates) {
+        await db.execute('UPDATE products SET quantity = $1 WHERE id = $2', [
+          update.newQuantity,
+          update.productId,
+        ])
+      }
+    })
+  } catch (error) {
+    // Let the cashier retry the invoice after a failed commit.
+    committedSaleIds.delete(sale.id)
+    throw error
+  }
 }
 
 /** Loads every stored invoice (with item lines), newest first. */
@@ -815,16 +903,64 @@ export async function getNextCreditNoteSequence(): Promise<number> {
   return (Number(rows[0]?.max_num) || 0) + 1
 }
 
-/** Inserts a credit note and its item lines in one transaction. */
-export async function persistCreditNote(note: CreditNote): Promise<void> {
+/**
+ * True when the referenced parent row (sale / product) is missing — SQLite
+ * reports this as `FOREIGN KEY constraint failed` (code 787). We check the
+ * parents *inside the transaction* and raise a readable error instead.
+ */
+function isForeignKeyError(error: unknown): boolean {
+  return String(error).includes('FOREIGN KEY constraint failed')
+}
+
+/**
+ * Atomically records a return: credit note + item lines + the stock restock —
+ * ONE `BEGIN … COMMIT` so a crash can never record a credit note without
+ * restoring inventory (or restock products for a note that was never saved).
+ *
+ * FK-safety (SQLite code 787): every parent id is normalized with `String()`
+ * and verified inside the transaction before the INSERT — a return for a
+ * pruned sale or a deleted product raises a clear error and rolls back,
+ * instead of dying on `FOREIGN KEY constraint failed` halfway through.
+ */
+export async function persistCreditNote(
+  note: CreditNote,
+  stockUpdates: StockUpdate[] = []
+): Promise<void> {
+  // Normalize ids to the exact TEXT form stored in the parent tables — a
+  // number that slipped in as `originalSaleId` would never match `sales.id`.
+  const saleId = String(note.originalSaleId)
+  const noteId = String(note.id)
+
   await withTransaction(async db => {
+    // Guard the sale FK before touching the tables: the invoice may have been
+    // pruned (cleanupOldSalesData) or never committed.
+    const saleRows = await db.select<{ id: string }[]>(
+      'SELECT id FROM sales WHERE id = $1',
+      [saleId]
+    )
+    if (saleRows.length === 0) {
+      throw new Error(`return: original sale not found (${saleId})`)
+    }
+
+    // Guard the product rows the restock will touch (stock_transactions
+    // carries a product_id FK).
+    for (const update of stockUpdates) {
+      const productRows = await db.select<{ id: string }[]>(
+        'SELECT id FROM products WHERE id = $1',
+        [String(update.productId)]
+      )
+      if (productRows.length === 0) {
+        throw new Error(`return: product not found (${update.productId})`)
+      }
+    }
+
     await db.execute(
       'INSERT INTO credit_notes (id, credit_note_number, original_invoice_number, original_sale_id, total_amount, cashier_name, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)',
       [
-        note.id,
+        noteId,
         note.creditNoteNumber,
         note.originalInvoiceNumber,
-        note.originalSaleId,
+        saleId,
         note.total,
         note.cashierId,
         note.createdAt,
@@ -835,8 +971,8 @@ export async function persistCreditNote(note: CreditNote): Promise<void> {
         'INSERT INTO credit_note_items (id, credit_note_id, product_id, product_name, quantity, sku, unit_price, total_price) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
         [
           crypto.randomUUID(),
-          note.id,
-          item.productId,
+          noteId,
+          String(item.productId),
           item.name,
           item.quantity,
           item.sku,
@@ -845,6 +981,43 @@ export async function persistCreditNote(note: CreditNote): Promise<void> {
         ]
       )
     }
+    // Restock + RETURN audit row for every line, inside the same transaction.
+    const now = new Date().toISOString()
+    for (const update of stockUpdates) {
+      const rows = await db.select<{ quantity: number }[]>(
+        'SELECT quantity FROM products WHERE id = $1',
+        [String(update.productId)]
+      )
+      const previousQuantity = Number(rows[0]?.quantity) || 0
+      const returned = Math.max(0, update.newQuantity - previousQuantity)
+      await db.execute(
+        'UPDATE products SET quantity = quantity + $1, updated_at = $2 WHERE id = $3',
+        [returned, now, String(update.productId)]
+      )
+      await db.execute(
+        'INSERT INTO stock_transactions (id, product_id, type, quantity, previous_quantity, new_quantity, cost_price, user_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+        [
+          crypto.randomUUID(),
+          String(update.productId),
+          'RETURN',
+          returned,
+          previousQuantity,
+          previousQuantity + returned,
+          null,
+          note.cashierId,
+          now,
+        ]
+      )
+    }
+  }).catch(error => {
+    // Surface a readable message instead of the raw FK code when a race
+    // (e.g. pruning) removed the parent between our check and the INSERT.
+    if (isForeignKeyError(error)) {
+      throw new Error(
+        `return: referenced sale or product is missing (${saleId})`
+      )
+    }
+    throw error
   })
 }
 
