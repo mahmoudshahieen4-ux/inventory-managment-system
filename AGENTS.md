@@ -17,7 +17,7 @@ This repository is a template with sensible defaults for building Tauri React ap
 
 **CRITICAL:** Follow these strictly:
 
-0. **Use npm only**: This project uses `npm`, NOT `pnpm`. Always use `npm install`, `npm run`, etc.
+0. **Use pnpm only**: This project uses `pnpm`, NOT `npm`. Always use `pnpm install`, `pnpm run`, etc.
 1. **Read Before Editing**: Always read files first to understand context
 2. **Follow Established Patterns**: Use patterns from this file and `docs/developer`
 3. **Senior Architect Mindset**: Consider performance, maintainability, testability

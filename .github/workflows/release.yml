@@ -24,20 +24,27 @@ jobs:
       contents: write # needed to create GitHub releases
 
     steps:
+      # Every action below is pinned to a major that runs on the Node 24
+      # action runtime. The old checkout@v4 / setup-node@v4 / action-setup@v4
+      # pins ran on the deprecated Node 20 runtime (the "Node.js 20 actions
+      # are deprecated" warnings).
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v5
         with:
-          version: 9
+          # Must stay in sync with the pnpm major that maintains
+          # pnpm-lock.yaml and pnpm-workspace.yaml (`allowBuilds` is a
+          # pnpm 10+ setting, so pnpm 9 would silently ignore it).
+          version: 11
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          # Pin to a stable LTS (Node 20) — 'lts/*' resolves to Node 24 and
-          # causes native toolchain/ABI warnings during the Tauri build.
-          node-version: '20'
+          # Node 22 LTS: satisfies the Vite 8 / React 19 toolchain and is the
+          # version this project is developed and locked against locally.
+          node-version: '22'
           cache: 'pnpm'
 
       - name: Install Rust stable
