@@ -21,6 +21,22 @@ Need to persist data?
 
 All data goes through Rust for type safety and security. Use TanStack Query on the frontend for loading states and cache invalidation.
 
+## POS reporting ranges
+
+The shared `cutoffForRange` helper in `src/lib/sales-time-range.ts` computes
+local midnight and serializes it as UTC ISO, matching `sales.created_at` writes.
+Today starts at today's local midnight; week/month start at local midnight
+7/30 days ago (not calendar week/month). Legacy analytics ranges use 90/180 days.
+Calendar arithmetic preserves local midnight across DST changes.
+
+Analytics queries bind this cutoff to `created_at >= $1`. `fetchSales(range)`
+supports the same SQL filter; omitting the range still hydrates the complete
+sales store. Sales History filters that hydrated store using the same cutoff,
+without replacing global sales or affecting returns and invoice sequencing.
+Analytics uses a range-keyed TanStack Query to isolate late responses.
+No schema migration is required. Do not compare UTC ISO timestamps directly
+against SQLite local date strings; the formats and time zones differ.
+
 ## File Locations
 
 ```

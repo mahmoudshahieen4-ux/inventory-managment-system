@@ -87,6 +87,10 @@ export function InventoryTable() {
   const isAdmin = role === 'ADMIN'
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<StockFilter>('ALL')
+  const [category, setCategory] = useState('ALL')
+  const categories = [...new Set(products.map(product => product.category))]
+    .filter(category => category.trim() !== '')
+    .sort((a, b) => a.localeCompare(b))
   const [modalOpen, setModalOpen] = useState(false)
   const [editingProduct, setEditingProduct] = useState<Product | null>(null)
   const [stockInOpen, setStockInOpen] = useState(false)
@@ -102,6 +106,9 @@ export function InventoryTable() {
       (product.barcode ?? '').toLowerCase().includes(normalizedSearch)
 
     if (!matchesSearch) return false
+    if (category !== 'ALL' && `category:${product.category}` !== category) {
+      return false
+    }
 
     if (filter === 'ALL') return true
 
@@ -216,7 +223,7 @@ export function InventoryTable() {
       </CardHeader>
 
       <CardContent className="space-y-4">
-        {/* Toolbar: search + status filter */}
+        {/* Toolbar: search + category + status filters */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="relative w-full sm:flex-1">
             <Search className="text-muted-foreground pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2" />
@@ -229,6 +236,25 @@ export function InventoryTable() {
               className="ps-9"
             />
           </div>
+
+          <Select value={category} onValueChange={setCategory}>
+            <SelectTrigger
+              className="w-full sm:flex-1"
+              aria-label={t('inventory.categoryFilterLabel')}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL">
+                {t('inventory.categoryFilter.all')}
+              </SelectItem>
+              {categories.map(category => (
+                <SelectItem key={category} value={`category:${category}`}>
+                  {category}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
           <Select
             value={filter}

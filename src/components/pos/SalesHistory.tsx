@@ -8,6 +8,11 @@ import { formatTransactionTimestamp } from '@/lib/date-time'
 import { useSalesStore } from '@/store/useSalesStore'
 import { Input } from '@/components/ui/input'
 import type { Sale } from '@/types/sales'
+import type { TimeRange } from '@/types/analytics'
+import { cutoffForRange, timeRangeLabelKeys } from '@/lib/sales-time-range'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+
+const HISTORY_RANGES: TimeRange[] = ['TODAY', '1_WEEK', '1_MONTH']
 
 interface SalesHistoryProps {
   /** Called with the stored sale to re-open its receipt for printing. */
@@ -20,9 +25,13 @@ export function SalesHistory({ onReprint, onReturn }: SalesHistoryProps) {
   const { t } = useTranslation()
   const sales = useSalesStore(state => state.sales)
   const [search, setSearch] = useState('')
+  const [range, setRange] = useState<TimeRange>('TODAY')
+  const cutoff = Date.parse(cutoffForRange(range))
   const normalizedSearch = search.trim().toLowerCase()
-  const filteredSales = sales.filter(sale =>
-    sale.invoiceNumber.toLowerCase().includes(normalizedSearch)
+  const filteredSales = sales.filter(
+    sale =>
+      Date.parse(sale.createdAt) >= cutoff &&
+      sale.invoiceNumber.toLowerCase().includes(normalizedSearch)
   )
 
   if (sales.length === 0) {
@@ -36,6 +45,28 @@ export function SalesHistory({ onReprint, onReturn }: SalesHistoryProps) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <ToggleGroup
+        type="single"
+        variant="outline"
+        size="sm"
+        value={range}
+        aria-label={t('sales.range.label')}
+        onValueChange={value => {
+          if (HISTORY_RANGES.includes(value as TimeRange))
+            setRange(value as TimeRange)
+        }}
+      >
+        {HISTORY_RANGES.map(option => (
+          <ToggleGroupItem key={option} value={option}>
+            {t(timeRangeLabelKeys[option])}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
+      {filteredSales.length === 0 && (
+        <p role="status" className="text-muted-foreground text-sm">
+          {t('pos.history.noMatches')}
+        </p>
+      )}
       <Input
         value={search}
         onChange={event => setSearch(event.target.value)}

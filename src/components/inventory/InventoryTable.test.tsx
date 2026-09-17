@@ -126,15 +126,14 @@ describe('InventoryTable', () => {
     expect(screen.queryByText('Dark Chocolate Bar')).not.toBeInTheDocument()
   })
 
-  it('keeps out of stock rows white with explicit hover styling', () => {
+  it('highlights out of stock rows with a theme-aware red tint', () => {
     render(<InventoryTable />)
 
     const row = screen.getByText('Espresso Beans 1kg').closest('tr')
-    expect(row?.className).toContain('bg-white')
-    expect(row?.className).toContain('border-b-[#E5E7EB]')
-    // Theme-aware hover for both light and dark modes.
-    expect(row?.className).toContain('hover:bg-slate-100')
-    expect(row?.className).toContain('dark:hover:bg-slate-800/60')
+    expect(row).toHaveClass('bg-red-50/70', 'dark:bg-red-950/30')
+    expect(row).toHaveClass('border-s-red-400/60', 'dark:border-s-red-500/50')
+    expect(row).toHaveClass('hover:bg-red-100/80', 'dark:hover:bg-red-900/40')
+    expect(row).not.toHaveClass('bg-white', 'dark:hover:bg-slate-800/60')
   })
 
   it('highlights low stock rows with an amber tint and accent border', () => {
@@ -153,14 +152,40 @@ describe('InventoryTable', () => {
     expect(row?.className).not.toContain('bg-white')
   })
 
-  it('does not highlight in stock rows', () => {
+  it('keeps in stock row backgrounds unchanged on hover in both themes', () => {
     render(<InventoryTable />)
 
     const row = screen.getByText('Dark Chocolate Bar').closest('tr')
-    expect(row?.className).toContain('bg-white')
-    expect(row?.className).toContain('hover:bg-slate-100')
-    expect(row?.className).not.toContain('bg-amber')
-    expect(row?.className).not.toContain('bg-rose')
+    expect(row).toHaveClass('bg-white', 'hover:bg-white')
+    expect(row).toHaveClass(
+      'dark:bg-card',
+      'dark:hover:bg-card',
+      'transition-none'
+    )
+    expect(row).not.toHaveClass('hover:bg-slate-100')
+    expect(row).not.toHaveClass('hover:bg-muted/50')
+    expect(row).not.toHaveClass('dark:hover:bg-slate-800/60')
+  })
+
+  it('combines category, search and status filters and resets to all categories', async () => {
+    const user = userEvent.setup()
+    render(<InventoryTable />)
+    await user.click(screen.getByLabelText('Filter by category'))
+    expect(screen.getAllByRole('option')).toHaveLength(6)
+    await user.click(screen.getByRole('option', { name: 'Dairy' }))
+    expect(screen.getByText('Whole Milk 1L')).toBeInTheDocument()
+    expect(screen.queryByText('Espresso Beans 1kg')).not.toBeInTheDocument()
+    await user.type(screen.getByLabelText(/search/i), 'milk')
+    await user.click(screen.getByLabelText(/filter by stock/i))
+    await user.click(screen.getByRole('option', { name: 'Out of Stock Only' }))
+    expect(screen.getByText(/no products match/i)).toBeInTheDocument()
+    await user.click(screen.getByLabelText(/filter by stock/i))
+    await user.click(screen.getByRole('option', { name: 'All Products' }))
+    expect(screen.getByText('Whole Milk 1L')).toBeInTheDocument()
+    await user.clear(screen.getByLabelText(/search/i))
+    await user.click(screen.getByLabelText('Filter by category'))
+    await user.click(screen.getByRole('option', { name: 'All Categories' }))
+    expect(screen.getByText('Espresso Beans 1kg')).toBeInTheDocument()
   })
 
   it('sorts rows by name when clicking the name header', async () => {

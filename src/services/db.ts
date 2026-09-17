@@ -7,6 +7,7 @@
 import Database from '@tauri-apps/plugin-sql'
 
 import { logger } from '@/lib/logger'
+import { cutoffForRange } from '@/lib/sales-time-range'
 import type { AuthAccount } from '@/types/auth'
 import type { Product, StockTransaction } from '@/types/inventory'
 import type {
@@ -834,11 +835,12 @@ export async function persistSaleAtomic(
   }
 }
 
-/** Loads every stored invoice (with item lines), newest first. */
-export async function fetchSales(): Promise<Sale[]> {
+/** Loads invoices newest first; omit range when hydrating the full sales store. */
+export async function fetchSales(range?: TimeRange): Promise<Sale[]> {
   const db = await getDb()
   const saleRows = await db.select<SaleRow[]>(
-    'SELECT id, invoice_number, subtotal, tax, total_amount, total_profit, cashier_name, created_at FROM sales ORDER BY created_at DESC'
+    `SELECT id, invoice_number, subtotal, tax, total_amount, total_profit, cashier_name, created_at FROM sales ${range ? 'WHERE created_at >= $1' : ''} ORDER BY created_at DESC`,
+    range ? [cutoffForRange(range)] : []
   )
   if (saleRows.length === 0) return []
 
@@ -1457,39 +1459,6 @@ export async function updateAuthUserPassword(
 /* ------------------------------------------------------------------ */
 /* Analytics — product performance & dead-stock reports                */
 /* ------------------------------------------------------------------ */
-
-/** Returns the ISO timestamp for `days` ago (used as the WHERE filter). */
-function cutoffIso(days: number): string {
-  const date = new Date()
-  date.setDate(date.getDate() - days)
-  return date.toISOString()
-}
-
-/** ISO timestamp for local midnight of the current day (start of "today"). */
-function startOfTodayIso(): string {
-  const date = new Date()
-  date.setHours(0, 0, 0, 0)
-  return date.toISOString()
-}
-
-/**
- * Maps a TimeRange to the ISO cutoff used by the SQL `created_at >= $1`
- * filter. `TODAY` starts at local midnight; the longer ranges go back N days
- * from the current moment — matching the JS-computed ISO clock that writes
- * `sales.created_at`, so both sides of the comparison share one time source.
- */
-function cutoffForRange(range: TimeRange): string {
-  switch (range) {
-    case 'TODAY':
-      return startOfTodayIso()
-    case '1_MONTH':
-      return cutoffIso(30)
-    case '3_MONTHS':
-      return cutoffIso(90)
-    case '6_MONTHS':
-      return cutoffIso(180)
-  }
-}
 
 /**
  * يجلب بيانات تحليلات المنتجات المجمعة من جدول المبيعات خلال فترة زمنية محددة.

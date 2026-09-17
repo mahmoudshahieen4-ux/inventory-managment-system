@@ -69,6 +69,7 @@ const EMPTY_ANALYTICS = {
 describe('db service — SQLite concurrency & analytics resilience', () => {
   afterEach(() => {
     setTauriRuntime(false)
+    vi.useRealTimers()
   })
 
   it('enables WAL, a 5s busy timeout and NORMAL sync before creating the schema', async () => {
@@ -135,6 +136,43 @@ describe('db service — SQLite concurrency & analytics resilience', () => {
     )
     expect(dbMocks.load).not.toHaveBeenCalled()
   })
+
+  it.each(['TODAY', '1_WEEK', '1_MONTH'] as const)(
+    'binds the same local-midnight cutoff for %s in history and analytics',
+    async range => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date(2026, 8, 16, 15, 30))
+      setTauriRuntime(true)
+      const db = await importDb()
+      const days = { TODAY: 0, '1_WEEK': 7, '1_MONTH': 30 }[range]
+      const expected = new Date(2026, 8, 16 - days).toISOString()
+      await db.fetchSales(range)
+      expect(dbMocks.select).toHaveBeenLastCalledWith(
+        expect.stringContaining('WHERE created_at >= $1'),
+        [expected]
+      )
+      await db.fetchProductAnalytics(range)
+      expect(dbMocks.select).toHaveBeenLastCalledWith(
+        expect.stringContaining('WHERE s.created_at >= $1'),
+        [expected]
+      )
+      await db.fetchAnalyticsSummary(range)
+      expect(dbMocks.select).toHaveBeenLastCalledWith(
+        expect.stringContaining('created_at >= $1'),
+        [expected]
+      )
+      await db.fetchDeadStockAnalytics(range)
+      expect(dbMocks.select).toHaveBeenLastCalledWith(
+        expect.stringContaining('created_at >= $1'),
+        [expected]
+      )
+      await db.fetchSales()
+      expect(dbMocks.select).toHaveBeenLastCalledWith(
+        expect.not.stringContaining('WHERE created_at'),
+        []
+      )
+    }
+  )
 
   it('still maps real rows when the queries succeed', async () => {
     setTauriRuntime(true)

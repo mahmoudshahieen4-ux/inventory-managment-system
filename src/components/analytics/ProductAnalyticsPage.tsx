@@ -43,9 +43,11 @@ import {
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { formatMoney } from '@/lib/money'
+import { timeRangeLabelKeys } from '@/lib/sales-time-range'
+import { useQuery } from '@tanstack/react-query'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/useAuthStore'
-import { fetchFullAnalytics, isTauriRuntime } from '@/services/db'
+import { fetchFullAnalytics } from '@/services/db'
 import type {
   AnalyticsData,
   AnalyticsSortMode,
@@ -56,13 +58,13 @@ import type {
 /* الثوابت المساعدة                                                    */
 /* ------------------------------------------------------------------ */
 
-/** تسميات النطاقات الزمنية لمجموعة التبديل. */
-const TIME_RANGE_LABELS: Record<TimeRange, string> = {
-  TODAY: 'اليوم',
-  '1_MONTH': 'آخر 30 يوم',
-  '3_MONTHS': 'آخر 3 أشهر',
-  '6_MONTHS': 'آخر 6 أشهر',
-}
+const ANALYTICS_RANGES: TimeRange[] = [
+  'TODAY',
+  '1_WEEK',
+  '1_MONTH',
+  '3_MONTHS',
+  '6_MONTHS',
+]
 
 /** يحدد لون شارة هامش الربح بناءً على القيمة. */
 function marginBadgeVariant(
@@ -74,7 +76,7 @@ function marginBadgeVariant(
 }
 
 /* ------------------------------------------------------------------ */
-/* خطاف جلب البيانات مع التخزين المؤقت اليدوي                           */
+/* Range-keyed persistent analytics queries                            */
 /* ------------------------------------------------------------------ */
 
 interface AnalyticsState {
@@ -85,58 +87,21 @@ interface AnalyticsState {
   setRange: (range: TimeRange) => void
 }
 
-/**
- * خطاف مخصص لإدارة حالة بيانات التحليلات.
- * يستخدم التخزين المؤقت اليدوي لتجنب الطلبات المتكررة.
- */
+/** Range-keyed queries keep late responses from replacing the active report. */
 function useAnalytics(): AnalyticsState {
-  const [data, setData] = useState<AnalyticsData | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [range, setRangeState] = useState<TimeRange>('6_MONTHS')
+  const [range, setRange] = useState<TimeRange>('TODAY')
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['product-analytics', range],
+    queryFn: () => fetchFullAnalytics(range),
+  })
 
-  const loadData = async (targetRange: TimeRange) => {
-    if (!isTauriRuntime()) {
-      setData({
-        summary: {
-          totalUnitsSold: 0,
-          totalRevenue: 0,
-          totalProfit: 0,
-          deadStockValue: 0,
-        },
-        productPerformance: [],
-        deadStock: [],
-        highestMargins: [],
-      })
-      setIsLoading(false)
-      return
-    }
-
-    setIsLoading(true)
-    setError(null)
-    try {
-      const result = await fetchFullAnalytics(targetRange)
-      setData(result)
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'حدث خطأ أثناء جلب البيانات'
-      )
-    } finally {
-      setIsLoading(false)
-    }
+  return {
+    data: data ?? null,
+    isLoading,
+    error: error?.message ?? null,
+    range,
+    setRange,
   }
-
-  const setRange = (newRange: TimeRange) => {
-    setRangeState(newRange)
-    void loadData(newRange)
-  }
-
-  // تحميل أولي مرة واحدة
-  if (isLoading && data === null) {
-    void loadData(range)
-  }
-
-  return { data, isLoading, error, range, setRange }
 }
 
 /* ------------------------------------------------------------------ */
@@ -276,18 +241,11 @@ function AnalyticsHeader({ range, onRangeChange }: AnalyticsHeaderProps) {
         size="sm"
         className="self-start sm:self-auto"
       >
-        <ToggleGroupItem value="TODAY">
-          {TIME_RANGE_LABELS['TODAY']}
-        </ToggleGroupItem>
-        <ToggleGroupItem value="1_MONTH">
-          {TIME_RANGE_LABELS['1_MONTH']}
-        </ToggleGroupItem>
-        <ToggleGroupItem value="3_MONTHS">
-          {TIME_RANGE_LABELS['3_MONTHS']}
-        </ToggleGroupItem>
-        <ToggleGroupItem value="6_MONTHS">
-          {TIME_RANGE_LABELS['6_MONTHS']}
-        </ToggleGroupItem>
+        {ANALYTICS_RANGES.map(option => (
+          <ToggleGroupItem key={option} value={option}>
+            {t(timeRangeLabelKeys[option])}
+          </ToggleGroupItem>
+        ))}
       </ToggleGroup>
     </div>
   )
