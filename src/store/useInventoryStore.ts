@@ -4,6 +4,11 @@ import { toast } from 'sonner'
 
 import i18n from '@/i18n/config'
 import {
+  DEFAULT_PRODUCT_UNIT,
+  normalizeProductUnit,
+  resolveUnitsPerCarton,
+} from '@/lib/product-unit'
+import {
   addStockToProduct,
   deleteProductRow,
   fetchProducts,
@@ -161,11 +166,13 @@ function coerceProduct(product: ProductCoerceInput): Product {
     purchasePrice: Number(product.purchasePrice) || 0,
     sellingPrice: Number(product.sellingPrice) || 0,
     category: product.category ?? '',
-    unit: product.unit?.trim() || undefined,
-    unitsPerCarton:
-      product.unit === 'كرتونة' && Number(product.unitsPerCarton) > 0
-        ? Number(product.unitsPerCarton)
-        : undefined,
+    // Every product has a unit: blank/legacy values fall back to "قطعة" so the
+    // UI and SQLite never hold an "unspecified" unit.
+    unit: normalizeProductUnit(product.unit) || DEFAULT_PRODUCT_UNIT,
+    unitsPerCarton: resolveUnitsPerCarton({
+      unit: product.unit,
+      unitsPerCarton: Number(product.unitsPerCarton),
+    }),
   }
 }
 

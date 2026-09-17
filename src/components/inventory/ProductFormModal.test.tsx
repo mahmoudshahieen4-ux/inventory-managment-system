@@ -25,7 +25,7 @@ function renderEditModal(product: Product) {
   )
 }
 
-/** The optional fields (SKU, barcode, unit) live behind a disclosure. */
+/** The optional fields (SKU, barcode) live behind a disclosure. */
 async function showMoreOptions(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: /show more options/i }))
 }

@@ -167,6 +167,21 @@ describe('InventoryTable', () => {
     expect(row).not.toHaveClass('dark:hover:bg-slate-800/60')
   })
 
+  it('hides the unit column and shows the unit beside the quantity', () => {
+    render(<InventoryTable />)
+
+    // The dedicated unit column header was dropped in favor of the inline unit.
+    expect(screen.queryByText('Unit')).not.toBeInTheDocument()
+
+    // Every product still renders its unit next to the quantity.
+    const milkRow = screen.getByText('Whole Milk 1L').closest('tr')
+    expect(milkRow?.textContent).toContain('علبة')
+
+    // Carton products surface their box count inline.
+    const cartonRow = screen.getByText('Espresso Beans 1kg').closest('tr')
+    expect(cartonRow?.textContent).toContain('12 boxes')
+  })
+
   it('combines category, search and status filters and resets to all categories', async () => {
     const user = userEvent.setup()
     render(<InventoryTable />)

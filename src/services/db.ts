@@ -7,6 +7,11 @@
 import Database from '@tauri-apps/plugin-sql'
 
 import { logger } from '@/lib/logger'
+import {
+  DEFAULT_PRODUCT_UNIT,
+  resolveProductUnit,
+  resolveUnitsPerCarton,
+} from '@/lib/product-unit'
 import { cutoffForRange } from '@/lib/sales-time-range'
 import type { AuthAccount } from '@/types/auth'
 import type { Product, StockTransaction } from '@/types/inventory'
@@ -342,6 +347,17 @@ function loadDb(): Promise<Database> {
         .catch(() => {
           // Column already exists — nothing to do.
         })
+      // Unit management was simplified: products without an explicit unit are
+      // counted in pieces, so legacy NULL/blank rows are backfilled once instead
+      // of rendering an "unspecified" unit in the UI.
+      await db
+        .execute(
+          "UPDATE products SET unit = $1 WHERE unit IS NULL OR TRIM(unit) = ''",
+          [DEFAULT_PRODUCT_UNIT]
+        )
+        .catch(() => {
+          // Column missing on very old schemas — the ALTER above will add it.
+        })
       // Barcode support (barcode scanners, see src/hooks/useBarcodeScanner.ts).
       await db
         .execute('ALTER TABLE products ADD COLUMN barcode TEXT')
@@ -462,8 +478,13 @@ function toProduct(row: ProductRow): Product {
     purchasePrice: row.purchase_price,
     sellingPrice: row.selling_price,
     category: row.category,
-    unit: row.unit ?? undefined,
-    unitsPerCarton: row.units_per_carton ?? undefined,
+    // Rows written before units existed (or with an empty string) read back as
+    // the default unit instead of leaking `null` into the UI.
+    unit: resolveProductUnit(row.unit),
+    unitsPerCarton: resolveUnitsPerCarton({
+      unit: row.unit ?? undefined,
+      unitsPerCarton: row.units_per_carton ?? undefined,
+    }),
   }
 }
 
@@ -513,8 +534,8 @@ export async function insertProduct(product: Product): Promise<void> {
       product.purchasePrice,
       product.sellingPrice,
       product.category,
-      product.unit ?? null,
-      product.unitsPerCarton ?? null,
+      resolveProductUnit(product.unit),
+      resolveUnitsPerCarton(product) ?? null,
       product.barcode ?? null,
       new Date().toISOString(),
     ]
@@ -533,8 +554,8 @@ export async function updateProductRow(product: Product): Promise<void> {
       product.purchasePrice,
       product.sellingPrice,
       product.category,
-      product.unit ?? null,
-      product.unitsPerCarton ?? null,
+      resolveProductUnit(product.unit),
+      resolveUnitsPerCarton(product) ?? null,
       product.barcode ?? null,
       new Date().toISOString(),
       product.id,

@@ -5,8 +5,11 @@
 /** Stock availability status, derived from quantity and reorder threshold. */
 export type StockStatus = 'OUT_OF_STOCK' | 'LOW_STOCK' | 'IN_STOCK'
 
-/** Common retail units used by the POS in Arabic. */
-export type ProductUnit = 'علبة' | 'كرتونة'
+/**
+ * Retail units used by the POS. Stored as stable data values (see
+ * `src/lib/product-unit.ts`), labelled through i18n.
+ */
+export type ProductUnit = 'قطعة' | 'علبة' | 'كرتونة'
 
 /** A single inventory item available for sale. */
 export interface Product {

@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { formatMoney } from '@/lib/money'
+import { resolveProductUnit } from '@/lib/product-unit'
 import { getStockStatus } from '@/lib/stock-status'
 import { cn } from '@/lib/utils'
 import { useCartStore } from '@/store/useCartStore'
@@ -113,11 +114,9 @@ export function ProductCatalog({
                   <p className="text-base font-semibold">
                     {formatMoney(product.sellingPrice)}
                   </p>
-                  {product.unit && (
-                    <span className="text-muted-foreground text-xs">
-                      {product.unit}
-                    </span>
-                  )}
+                  <span className="text-muted-foreground text-xs">
+                    {resolveProductUnit(product.unit)}
+                  </span>
                 </div>
 
                 <div className="mt-auto flex items-center justify-between gap-2">

@@ -41,6 +41,7 @@ import {
 } from '@/components/ui/table'
 import { getStockStatus } from '@/lib/stock-status'
 import { formatMoney } from '@/lib/money'
+import { resolveProductUnit, resolveUnitsPerCarton } from '@/lib/product-unit'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useInventoryStore } from '@/store/useInventoryStore'
@@ -131,7 +132,10 @@ export function InventoryTable() {
   }
 
   // ACTION rows + status column. Admins get an extra actions column.
-  const columnCount = isAdmin ? 9 : 8
+  // The unit column was intentionally dropped: each product has exactly one
+  // unit (defaulting to "قطعة"), so it is shown next to the quantity instead,
+  // which frees horizontal space for the barcode, quantity and prices.
+  const columnCount = isAdmin ? 8 : 7
 
   const handleOpenCreate = () => {
     setEditingProduct(null)
@@ -287,9 +291,6 @@ export function InventoryTable() {
               <TableRow className="hover:bg-muted">
                 {renderSortableHead('sku', t('inventory.column.sku'))}
                 {renderSortableHead('name', t('inventory.column.name'))}
-                <TableHead className={headClass}>
-                  {t('inventory.column.unit')}
-                </TableHead>
                 {renderSortableHead(
                   'quantity',
                   t('inventory.column.quantity'),
@@ -329,6 +330,7 @@ export function InventoryTable() {
                 )
                 const statusStyle = stockStatusStyles[status]
                 const StatusIcon = statusStyle.icon
+                const cartonBoxes = resolveUnitsPerCarton(product)
 
                 return (
                   <TableRow
@@ -340,27 +342,27 @@ export function InventoryTable() {
                   >
                     <TableCell className="text-muted-foreground font-mono text-xs font-semibold uppercase">
                       {product.sku}
+                      {product.barcode && (
+                        <span className="mt-0.5 block font-normal tracking-normal normal-case">
+                          {product.barcode}
+                        </span>
+                      )}
                     </TableCell>
                     <TableCell className="font-medium">
                       {product.name}
                     </TableCell>
-                    <TableCell className="text-sm">
-                      {product.unit ?? t('inventory.unit.notSet')}
-                      {product.unit === 'كرتونة' && product.unitsPerCarton && (
-                        <span className="text-muted-foreground ms-1 text-xs">
-                          (
-                          {t('inventory.unit.boxesCount', {
-                            count: product.unitsPerCarton,
-                          })}
-                          )
-                        </span>
-                      )}
-                    </TableCell>
                     <TableCell className="text-end font-semibold tabular-nums">
                       {product.quantity}
-                      {product.unit && (
+                      <span className="text-muted-foreground ms-1 text-xs font-normal">
+                        {resolveProductUnit(product.unit)}
+                      </span>
+                      {cartonBoxes !== undefined && (
                         <span className="text-muted-foreground ms-1 text-xs font-normal">
-                          {product.unit}
+                          (
+                          {t('inventory.unit.boxesCount', {
+                            count: cartonBoxes,
+                          })}
+                          )
                         </span>
                       )}
                     </TableCell>

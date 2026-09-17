@@ -18,6 +18,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAutoSelectOnFocus } from '@/hooks/use-auto-select-on-focus'
 import { formatMoney } from '@/lib/money'
+import { resolveProductUnit } from '@/lib/product-unit'
 import { getStockStatus } from '@/lib/stock-status'
 import { cn } from '@/lib/utils'
 import { useInventoryStore } from '@/store/useInventoryStore'
@@ -300,7 +301,8 @@ export function StockInModal({
                     {t('inventory.stockIn.currentStock')}
                   </span>
                   <Badge variant="secondary">
-                    {selectedProduct.quantity} {selectedProduct.unit ?? ''}
+                    {selectedProduct.quantity}{' '}
+                    {resolveProductUnit(selectedProduct.unit)}
                   </Badge>
                 </div>
               </div>
