@@ -30,9 +30,13 @@ interface ProductFormValues {
   sku: string
   barcode: string
   category: string
-  purchasePrice: string
-  sellingPrice: string
-  quantity: string
+  cartonQuantity: string
+  boxQuantity: string
+  boxesPerCarton: string
+  cartonPurchasePrice: string
+  boxPurchasePrice: string
+  cartonSellingPrice: string
+  boxSellingPrice: string
   minThreshold: string
 }
 
@@ -50,16 +54,24 @@ const EMPTY_VALUES: ProductFormValues = {
   sku: '',
   barcode: '',
   category: '',
-  purchasePrice: '',
-  sellingPrice: '',
-  quantity: '',
+  cartonQuantity: '0',
+  boxQuantity: '0',
+  boxesPerCarton: '12',
+  cartonPurchasePrice: '',
+  boxPurchasePrice: '',
+  cartonSellingPrice: '',
+  boxSellingPrice: '',
   minThreshold: '',
 }
 
 const NUMBER_FIELDS = [
-  'purchasePrice',
-  'sellingPrice',
-  'quantity',
+  'cartonQuantity',
+  'boxQuantity',
+  'boxesPerCarton',
+  'cartonPurchasePrice',
+  'boxPurchasePrice',
+  'cartonSellingPrice',
+  'boxSellingPrice',
   'minThreshold',
 ] as const
 
@@ -69,9 +81,13 @@ function toFormValues(product: Product): ProductFormValues {
     sku: product.sku,
     barcode: product.barcode ?? '',
     category: product.category,
-    purchasePrice: String(product.purchasePrice),
-    sellingPrice: String(product.sellingPrice),
-    quantity: String(product.quantity),
+    cartonQuantity: String(product.cartonQuantity),
+    boxQuantity: String(product.boxQuantity),
+    boxesPerCarton: String(product.boxesPerCarton),
+    cartonPurchasePrice: String(product.cartonPurchasePrice),
+    boxPurchasePrice: String(product.boxPurchasePrice),
+    cartonSellingPrice: String(product.cartonSellingPrice),
+    boxSellingPrice: String(product.boxSellingPrice),
     minThreshold: String(product.minThreshold),
   }
 }
@@ -185,6 +201,18 @@ function validate(
       errors[field] = notANumber
     } else if (number < 0) {
       errors[field] = negative
+    } else if (
+      [
+        'cartonQuantity',
+        'boxQuantity',
+        'boxesPerCarton',
+        'minThreshold',
+      ].includes(field) &&
+      !Number.isInteger(number)
+    ) {
+      errors[field] = t('inventory.form.validation.positiveInteger')
+    } else if (field === 'boxesPerCarton' && number < 1) {
+      errors[field] = t('inventory.form.validation.positiveInteger')
     }
   }
 
@@ -271,9 +299,19 @@ export function ProductFormModal({
       sku: values.sku.trim(),
       barcode: values.barcode.trim() || undefined,
       category: values.category.trim(),
-      purchasePrice: parseNumber(values.purchasePrice),
-      sellingPrice: parseNumber(values.sellingPrice),
-      quantity: parseNumber(values.quantity),
+      cartonQuantity: parseNumber(values.cartonQuantity),
+      boxQuantity: parseNumber(values.boxQuantity),
+      boxesPerCarton: parseNumber(values.boxesPerCarton),
+      cartonPurchasePrice: parseNumber(values.cartonPurchasePrice),
+      boxPurchasePrice: parseNumber(values.boxPurchasePrice),
+      cartonSellingPrice: parseNumber(values.cartonSellingPrice),
+      boxSellingPrice: parseNumber(values.boxSellingPrice),
+      quantity:
+        parseNumber(values.cartonQuantity) *
+          parseNumber(values.boxesPerCarton) +
+        parseNumber(values.boxQuantity),
+      purchasePrice: parseNumber(values.boxPurchasePrice),
+      sellingPrice: parseNumber(values.boxSellingPrice),
       minThreshold: parseNumber(values.minThreshold),
     }
 
@@ -290,7 +328,7 @@ export function ProductFormModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         {/* `pe-10` keeps the title/description clear of the close (X) button. */}
         <DialogHeader className="pe-10">
           <DialogTitle>
@@ -341,63 +379,43 @@ export function ProductFormModal({
             )}
           </FormField>
 
-          <FormField
-            id="product-purchase-price"
-            label={t('inventory.form.purchasePrice')}
-            error={errors.purchasePrice}
-            required
-          >
-            {controlProps => (
-              <Input
-                {...controlProps}
+          {[
+            ['cartonQuantity', 'inventory.form.cartonQuantity', 1],
+            ['boxQuantity', 'inventory.form.boxQuantity', 1],
+            ['boxesPerCarton', 'inventory.form.boxesPerCarton', 1],
+            ['cartonPurchasePrice', 'inventory.form.cartonPurchasePrice', 0.01],
+            ['boxPurchasePrice', 'inventory.form.boxPurchasePrice', 0.01],
+            ['cartonSellingPrice', 'inventory.form.cartonSellingPrice', 0.01],
+            ['boxSellingPrice', 'inventory.form.boxSellingPrice', 0.01],
+          ].map(([field, label, step]) => {
+            const name = field as keyof ProductFormValues
+            const id = `product-${name}`
+            return (
+              <FormField
+                key={name}
+                id={id}
+                label={t(label as string)}
+                error={errors[name]}
                 required
-                type="text"
-                inputMode="decimal"
-                value={values.purchasePrice}
-                onChange={setField('purchasePrice')}
-              />
-            )}
-          </FormField>
-
-          <FormField
-            id="product-selling-price"
-            label={t('inventory.form.sellingPrice')}
-            error={errors.sellingPrice}
-            required
-          >
-            {controlProps => (
-              <Input
-                {...controlProps}
-                required
-                type="text"
-                inputMode="decimal"
-                value={values.sellingPrice}
-                onChange={setField('sellingPrice')}
-              />
-            )}
-          </FormField>
-
-          <FormField
-            id="product-quantity"
-            label={t('inventory.form.quantity')}
-            error={errors.quantity}
-            required
-          >
-            {controlProps => (
-              <Input
-                {...controlProps}
-                required
-                type="number"
-                min={0}
-                step="1"
-                value={values.quantity}
-                onFocus={onQtyFocus}
-                onMouseUp={onMouseUpQty}
-                onWheel={onWheel}
-                onChange={setField('quantity')}
-              />
-            )}
-          </FormField>
+              >
+                {controlProps => (
+                  <Input
+                    {...controlProps}
+                    required
+                    type={(step as number) === 1 ? 'number' : 'text'}
+                    min={(step as number) === 1 ? 0 : undefined}
+                    step={(step as number) === 1 ? 1 : undefined}
+                    inputMode={(step as number) === 1 ? undefined : 'decimal'}
+                    value={values[name]}
+                    onFocus={onQtyFocus}
+                    onMouseUp={onMouseUpQty}
+                    onWheel={onWheel}
+                    onChange={setField(name)}
+                  />
+                )}
+              </FormField>
+            )
+          })}
 
           <FormField
             id="product-min-threshold"

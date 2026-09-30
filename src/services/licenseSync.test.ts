@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { LicenseRecord } from '@/types/license'
+import type { LicenseTokenClaims } from '@/services/licenseVerification'
 import { mergeCloudSubscription, resolveLocalStatus } from './licenseSync'
 import { syncSubscriptionWithCloud } from './licenseSync'
 
@@ -24,6 +25,12 @@ const supabaseMocks = vi.hoisted(() => {
 
 vi.mock('./supabase', () => supabaseMocks)
 
+const verificationMocks = vi.hoisted(() => ({
+  verifySignedLicense: vi.fn(),
+}))
+
+vi.mock('@/services/licenseVerification', () => verificationMocks)
+
 /** Mocked SQLite persistence (see localLicenseRepository). */
 const dbMocks = vi.hoisted(() => ({
   isTauriRuntime: vi.fn(() => true),
@@ -34,20 +41,32 @@ const dbMocks = vi.hoisted(() => ({
 
 vi.mock('@/services/db', () => dbMocks)
 
+const ACTIVE_EXP = Math.floor((Date.now() + 30 * DAY_MS) / 1000)
+
+function signedClaims(
+  overrides: Partial<LicenseTokenClaims> = {}
+): LicenseTokenClaims {
+  return {
+    version: 1,
+    issuer: 'hyper-market',
+    machineId: 'AABBCCDD',
+    status: 'ACTIVE',
+    exp: ACTIVE_EXP,
+    jti: 'license-test',
+    ...overrides,
+  }
+}
+
 function cloudRow(
   overrides: Partial<{
     machine_id: string
-    client_name: string | null
-    status: string
-    expires_at: string
+    license_token: string | null
     updated_at: string
   }> = {}
 ) {
   return {
     machine_id: 'AABBCCDD',
-    client_name: 'Corner Shop',
-    status: 'ACTIVE',
-    expires_at: new Date(Date.now() + 30 * DAY_MS).toISOString(),
+    license_token: 'signed-active',
     updated_at: new Date().toISOString(),
     ...overrides,
   }
@@ -60,6 +79,26 @@ describe('syncSubscriptionWithCloud', () => {
     dbMocks.isTauriRuntime.mockReturnValue(true)
     dbMocks.fetchLicenseRow.mockResolvedValue(null)
     dbMocks.persistLicense.mockResolvedValue(undefined)
+    verificationMocks.verifySignedLicense.mockImplementation(
+      async (machineId: string, token: string) => {
+        if (token === 'unsigned-token') {
+          return { valid: false, error: 'SIGNATURE' }
+        }
+        const claims = signedClaims({
+          machineId: machineId.toUpperCase(),
+          status: token === 'signed-blocked' ? 'BLOCKED' : 'ACTIVE',
+          exp:
+            token === 'signed-expired'
+              ? Math.floor(Date.now() / 1000) - 1
+              : ACTIVE_EXP,
+        })
+        return {
+          valid: claims.status === 'ACTIVE' && claims.exp * 1000 > Date.now(),
+          claims,
+          expiresAt: new Date(claims.exp * 1000).toISOString(),
+        }
+      }
+    )
   })
 
   it('skips the sync when Supabase is not configured', async () => {
@@ -102,11 +141,11 @@ describe('syncSubscriptionWithCloud', () => {
   })
 
   it('applies an ACTIVE cloud subscription to the local license', async () => {
-    const expiresAt = new Date(Date.now() + 30 * DAY_MS).toISOString()
     supabaseMocks.maybeSingle.mockResolvedValue({
-      data: cloudRow({ expires_at: expiresAt }),
+      data: cloudRow(),
       error: null,
     })
+    const expiresAt = new Date(ACTIVE_EXP * 1000).toISOString()
 
     const result = await syncSubscriptionWithCloud('AABBCCDD')
 
@@ -132,7 +171,7 @@ describe('syncSubscriptionWithCloud', () => {
 
   it('locks the app locally when the cloud status is BLOCKED', async () => {
     supabaseMocks.maybeSingle.mockResolvedValue({
-      data: cloudRow({ status: 'BLOCKED' }),
+      data: cloudRow({ license_token: 'signed-blocked' }),
       error: null,
     })
 
@@ -144,10 +183,7 @@ describe('syncSubscriptionWithCloud', () => {
 
   it('expires a subscription whose cloud expiry already passed (UTC)', async () => {
     supabaseMocks.maybeSingle.mockResolvedValue({
-      data: cloudRow({
-        status: 'ACTIVE',
-        expires_at: new Date(Date.now() - DAY_MS).toISOString(),
-      }),
+      data: cloudRow({ license_token: 'signed-expired' }),
       error: null,
     })
 
@@ -158,9 +194,9 @@ describe('syncSubscriptionWithCloud', () => {
   })
 
   it('reports UNCHANGED when the local record already matches the cloud', async () => {
-    const expiresAt = new Date(Date.now() + 30 * DAY_MS).toISOString()
+    const expiresAt = new Date(ACTIVE_EXP * 1000).toISOString()
     dbMocks.fetchLicenseRow.mockResolvedValue({
-      licenseKey: 'ABCD-EF01-2345-6789',
+      licenseKey: 'signed-active',
       status: 'ACTIVE',
       activationDate: null,
       expirationDate: expiresAt,
@@ -170,13 +206,26 @@ describe('syncSubscriptionWithCloud', () => {
       lastActiveTime: new Date().toISOString(),
     })
     supabaseMocks.maybeSingle.mockResolvedValue({
-      data: cloudRow({ expires_at: expiresAt }),
+      data: cloudRow(),
       error: null,
     })
 
     const result = await syncSubscriptionWithCloud('AABBCCDD')
 
     expect(result.outcome).toBe('UNCHANGED')
+    expect(dbMocks.persistLicense).not.toHaveBeenCalled()
+  })
+
+  it('does not apply a cloud row without a valid signed token', async () => {
+    supabaseMocks.maybeSingle.mockResolvedValue({
+      data: cloudRow({ license_token: 'unsigned-token' }),
+      error: null,
+    })
+
+    const result = await syncSubscriptionWithCloud('AABBCCDD')
+
+    expect(result.outcome).toBe('INVALID_SIGNATURE')
+    expect(result.record).toBeNull()
     expect(dbMocks.persistLicense).not.toHaveBeenCalled()
   })
 
@@ -198,44 +247,50 @@ describe('resolveLocalStatus', () => {
   const now = new Date('2026-06-15T12:00:00.000Z')
 
   it('keeps an ACTIVE subscription that expires in the future', () => {
-    expect(resolveLocalStatus('ACTIVE', '2026-07-15T00:00:00.000Z', now)).toBe(
-      'ACTIVE'
-    )
+    expect(
+      resolveLocalStatus(
+        signedClaims({
+          exp: Math.floor(Date.parse('2026-07-15T00:00:00.000Z') / 1000),
+        }),
+        now
+      )
+    ).toBe('ACTIVE')
   })
 
   it('expires an ACTIVE subscription whose expiry passed', () => {
-    expect(resolveLocalStatus('ACTIVE', '2026-06-15T11:59:59.000Z', now)).toBe(
-      'EXPIRED'
-    )
+    expect(
+      resolveLocalStatus(
+        signedClaims({
+          exp: Math.floor(Date.parse('2026-06-15T11:59:59.000Z') / 1000),
+        }),
+        now
+      )
+    ).toBe('EXPIRED')
   })
 
   it('treats an exactly-expired instant as EXPIRED', () => {
-    expect(resolveLocalStatus('ACTIVE', '2026-06-15T12:00:00.000Z', now)).toBe(
-      'EXPIRED'
-    )
+    expect(
+      resolveLocalStatus(
+        signedClaims({ exp: Math.floor(now.getTime() / 1000) }),
+        now
+      )
+    ).toBe('EXPIRED')
   })
 
   it('locks BLOCKED subscriptions regardless of the expiry date', () => {
-    expect(resolveLocalStatus('BLOCKED', '2030-01-01T00:00:00.000Z', now)).toBe(
-      'EXPIRED'
-    )
-  })
-
-  it('expires EXPIRED cloud rows', () => {
-    expect(resolveLocalStatus('EXPIRED', '2030-01-01T00:00:00.000Z', now)).toBe(
-      'EXPIRED'
-    )
-  })
-
-  it('fails safe on unparseable expiry data', () => {
-    expect(resolveLocalStatus('ACTIVE', 'not-a-date', now)).toBe('EXPIRED')
+    expect(
+      resolveLocalStatus(
+        signedClaims({ status: 'BLOCKED', exp: ACTIVE_EXP }),
+        now
+      )
+    ).toBe('EXPIRED')
   })
 })
 
 describe('mergeCloudSubscription', () => {
-  it('preserves the local key and trial anchors while taking cloud state', () => {
+  it('takes the signed cloud token and preserves local trial anchors', () => {
     const local: LicenseRecord = {
-      licenseKey: 'ABCD-EF01-2345-6789',
+      licenseKey: 'old-token',
       status: 'TRIAL',
       activationDate: '2026-01-01T00:00:00.000Z',
       expirationDate: null,
@@ -246,20 +301,16 @@ describe('mergeCloudSubscription', () => {
     }
     const now = new Date('2026-06-15T12:00:00.000Z')
 
-    const merged = mergeCloudSubscription(
-      local,
-      cloudRow({
-        status: 'ACTIVE',
-        expires_at: '2026-07-15T00:00:00.000Z',
-      }),
-      now
-    )
+    const cloudClaims = signedClaims({
+      exp: Math.floor(Date.parse('2026-07-15T00:00:00.000Z') / 1000),
+    })
+    const merged = mergeCloudSubscription(local, cloudRow(), cloudClaims, now)
 
     expect(merged).toEqual({
-      licenseKey: 'ABCD-EF01-2345-6789',
+      licenseKey: 'signed-active',
       status: 'ACTIVE',
       activationDate: '2026-01-01T00:00:00.000Z',
-      expirationDate: '2026-07-15T00:00:00.000Z',
+      expirationDate: new Date(cloudClaims.exp * 1000).toISOString(),
       isTrial: false,
       firstRunDate: '2026-01-01T00:00:00.000Z',
       trialExpirationDate: '2026-01-04T00:00:00.000Z',
@@ -270,15 +321,16 @@ describe('mergeCloudSubscription', () => {
   it('builds a full record from the cloud when no local state exists', () => {
     const now = new Date('2026-06-15T12:00:00.000Z')
 
-    const merged = mergeCloudSubscription(
-      null,
-      cloudRow({ expires_at: '2026-07-15T00:00:00.000Z' }),
-      now
-    )
+    const cloudClaims = signedClaims({
+      exp: Math.floor(Date.parse('2026-07-15T00:00:00.000Z') / 1000),
+    })
+    const merged = mergeCloudSubscription(null, cloudRow(), cloudClaims, now)
 
     expect(merged.status).toBe('ACTIVE')
-    expect(merged.expirationDate).toBe('2026-07-15T00:00:00.000Z')
-    expect(merged.licenseKey).toBeNull()
+    expect(merged.expirationDate).toBe(
+      new Date(cloudClaims.exp * 1000).toISOString()
+    )
+    expect(merged.licenseKey).toBe('signed-active')
     expect(merged.lastActiveTime).toBe(now.toISOString())
   })
 })

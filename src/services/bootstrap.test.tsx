@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useInventoryStore } from '@/store/useInventoryStore'
 import { usePayrollStore } from '@/store/usePayrollStore'
 import { useSalesStore } from '@/store/useSalesStore'
+import { useHeldInvoicesStore } from '@/store/useHeldInvoicesStore'
 import { useUIStore } from '@/store/ui-store'
 import { BOOTSTRAP_TIMEOUT_MS, useAppBootstrap } from './bootstrap'
 
@@ -55,6 +56,10 @@ describe('useAppBootstrap', () => {
       })
     vi.spyOn(useInventoryStore.getState(), 'hydrate').mockImplementation(hang)
     vi.spyOn(useSalesStore.getState(), 'hydrate').mockImplementation(hang)
+    vi.spyOn(
+      useHeldInvoicesStore.getState(),
+      'hydrateHeldInvoices'
+    ).mockImplementation(hang)
     vi.spyOn(usePayrollStore.getState(), 'hydrate').mockImplementation(hang)
 
     renderHook(() => useAppBootstrap())

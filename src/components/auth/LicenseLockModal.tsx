@@ -1,4 +1,5 @@
 import {
+  Check,
   Copy,
   LockKeyhole,
   MessageCircle,
@@ -8,13 +9,14 @@ import {
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 
+import { toast } from 'sonner'
+import { copyText } from '@/lib/copy-text'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { formatLicenseKey } from '@/lib/license-key'
-import { SUPPORT_INFO } from '@/lib/store-config'
-import { getHardwareId, type HardwareId } from '@/services/hardware-id'
+import { SUPPORT_INFO } from '@/constants/support'
+import { getHardwareId } from '@/services/hardware-id'
 import { useLicenseStore } from '@/store/useLicenseStore'
 
 interface LicenseLockModalProps {
@@ -34,24 +36,50 @@ interface LicenseLockModalProps {
 export function LicenseLockModal({ onClose }: LicenseLockModalProps) {
   const { t } = useTranslation()
   const status = useLicenseStore(state => state.status)
-  const [hardware, setHardware] = useState<HardwareId | null>(null)
+  const [hardwareId, setHardwareId] = useState<string | null>(null)
+  const [hardwareIdLoading, setHardwareIdLoading] = useState(true)
   const [key, setKey] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [invalid, setInvalid] = useState(false)
+  const [copiedId, setCopiedId] = useState(false)
 
   useEffect(() => {
-    void getHardwareId().then(setHardware)
-  }, [])
+    let mounted = true
+
+    const loadHardwareId = async () => {
+      try {
+        const hardware = await getHardwareId()
+        if (mounted) setHardwareId(hardware.displayId)
+      } catch {
+        if (mounted) toast.error(t('license.lock.hardwareIdLoadFailed'))
+      } finally {
+        if (mounted) setHardwareIdLoading(false)
+      }
+    }
+
+    void loadHardwareId()
+    return () => {
+      mounted = false
+    }
+  }, [t])
+
+  useEffect(() => {
+    if (!copiedId) return
+    const timer = window.setTimeout(() => setCopiedId(false), 2000)
+    return () => window.clearTimeout(timer)
+  }, [copiedId])
 
   const isExpired = status === 'EXPIRED'
 
   const handleCopyHardwareId = async () => {
-    if (!hardware) return
+    if (!hardwareId) return
     try {
-      await navigator.clipboard.writeText(hardware.displayId)
+      if (!(await copyText(hardwareId)))
+        throw new Error('Clipboard copy failed')
+      setCopiedId(true)
       toast.success(t('license.lock.copied'))
     } catch {
-      // Clipboard unavailable (permissions) — nothing to do.
+      toast.error(t('license.lock.copyFailed'))
     }
   }
 
@@ -74,7 +102,7 @@ export function LicenseLockModal({ onClose }: LicenseLockModalProps) {
           <Button
             variant="ghost"
             size="icon"
-            className="absolute end-4 top-4"
+            className="absolute inset-e-4 top-4"
             aria-label={t('license.lock.close')}
             onClick={onClose}
           >
@@ -100,17 +128,34 @@ export function LicenseLockModal({ onClose }: LicenseLockModalProps) {
         <div className="space-y-1.5">
           <p className="text-sm font-medium">{t('license.lock.hardwareId')}</p>
           <div className="flex items-center gap-2">
-            <code className="bg-muted flex-1 rounded-md px-3 py-2 text-center font-mono text-sm tracking-widest">
-              {hardware?.displayId ?? '····-····-····-····'}
-            </code>
+            <span
+              className="select-text bg-muted flex-1 rounded-md px-3 py-2 text-center font-mono text-sm tracking-widest"
+              style={{
+                userSelect: 'text',
+                WebkitUserSelect: 'text',
+                WebkitTouchCallout: 'default',
+              }}
+            >
+              {hardwareIdLoading
+                ? t('license.lock.hardwareIdLoading')
+                : (hardwareId ?? t('license.lock.hardwareIdLoadFailed'))}
+            </span>
             <Button
               variant="outline"
               size="icon"
-              aria-label={t('license.lock.copyHardwareId')}
-              disabled={!hardware}
+              aria-label={
+                copiedId
+                  ? t('license.lock.copied')
+                  : t('license.lock.copyHardwareId')
+              }
+              disabled={!hardwareId}
               onClick={() => void handleCopyHardwareId()}
             >
-              <Copy className="size-4" />
+              {copiedId ? (
+                <Check className="size-4" />
+              ) : (
+                <Copy className="size-4" />
+              )}
             </Button>
           </div>
         </div>

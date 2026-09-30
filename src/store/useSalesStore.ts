@@ -37,7 +37,8 @@ export interface SalesState {
    */
   submitSale: (
     sale: Omit<Sale, 'id' | 'createdAt' | 'invoiceNumber'>,
-    stockUpdates: StockUpdate[]
+    stockUpdates: StockUpdate[],
+    heldInvoiceId?: string
   ) => Promise<Sale | null>
   /** Retrieves a stored invoice by id, for re-printing from sales history. */
   getSaleById: (id: string) => Sale | undefined
@@ -64,7 +65,7 @@ export const useSalesStore = create<SalesState>()(
 
       getSaleById: id => get().sales.find(sale => sale.id === id),
 
-      submitSale: async (sale, stockUpdates) => {
+      submitSale: async (sale, stockUpdates, heldInvoiceId) => {
         // Double-click / repeated F2 guard: one checkout at a time.
         if (get().isSubmitting) return null
 
@@ -81,7 +82,7 @@ export const useSalesStore = create<SalesState>()(
         try {
           // Invoice + item lines + stock decrement commit in ONE transaction.
           if (isTauriRuntime()) {
-            await persistSaleAtomic(record, stockUpdates)
+            await persistSaleAtomic(record, stockUpdates, heldInvoiceId)
           }
           // Only after a successful commit: publish the invoice and advance
           // the sequence, so a failed write can never show a phantom sale.

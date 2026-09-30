@@ -5,6 +5,7 @@ import {
   generateBarcode,
   isValidEAN13,
   playScanBeep,
+  playErrorBeep,
 } from './barcode'
 
 /** Known-good EAN-13 sample: 5901234123457. */
@@ -49,5 +50,9 @@ describe('isValidEAN13', () => {
 describe('playScanBeep', () => {
   it('is a safe no-op when WebAudio is unavailable', () => {
     expect(() => playScanBeep({ frequency: 800 })).not.toThrow()
+  })
+
+  it('plays the rejected-scan cue without requiring WebAudio', () => {
+    expect(() => playErrorBeep()).not.toThrow()
   })
 })

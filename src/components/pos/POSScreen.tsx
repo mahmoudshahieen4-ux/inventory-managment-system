@@ -1,16 +1,27 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { Archive, CircleHelp, PauseCircle } from 'lucide-react'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useSalesStore } from '@/store/useSalesStore'
 
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useBarcodeScanner } from '@/hooks/useBarcodeScanner'
 import { usePosShortcuts } from '@/hooks/use-pos-shortcuts'
-import { playScanBeep } from '@/lib/barcode'
+import { playErrorBeep, playScanBeep } from '@/lib/barcode'
 import { findProductByBarcode, isTauriRuntime } from '@/services/db'
 import { useCartStore } from '@/store/useCartStore'
 import { useInventoryStore } from '@/store/useInventoryStore'
+import { useHeldInvoicesStore } from '@/store/useHeldInvoicesStore'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
 import type { CreditNote, ReturnItem, Sale } from '@/types/sales'
 import { CartSummary } from './CartSummary'
 import { ProductCatalog } from './ProductCatalog'
@@ -18,6 +29,8 @@ import { ReceiptModal } from './ReceiptModal'
 import { SalesHistory } from './SalesHistory'
 import { ReturnModal } from './ReturnModal'
 import { CreditNoteModal } from './CreditNoteModal'
+import { HoldCartDialog } from './HoldCartDialog'
+import { HeldInvoicesModal } from './HeldInvoicesModal'
 
 /** Which panel the left POS pane shows. */
 type PosTab = 'catalog' | 'history'
@@ -37,6 +50,14 @@ export function POSScreen() {
   const [creditNote, setCreditNote] = useState<CreditNote | null>(null)
   const [creditNoteOpen, setCreditNoteOpen] = useState(false)
   const [catalogSearch, setCatalogSearch] = useState('')
+  const [holdOpen, setHoldOpen] = useState(false)
+  const [heldInvoicesOpen, setHeldInvoicesOpen] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const cartItemCount = useCartStore(state => state.items.length)
+  const heldInvoiceCount = useHeldInvoicesStore(
+    state => state.heldInvoices.length
+  )
 
   /**
    * Hands-free barcode scanning: USB/Bluetooth scanners behave like keyboards,
@@ -52,10 +73,12 @@ export function POSScreen() {
       (isTauriRuntime() ? await findProductByBarcode(code) : null)
 
     if (!product) {
+      playErrorBeep()
       toast.error(t('pos.scan.notFound', { barcode: code }))
       return
     }
     if (product.quantity <= 0) {
+      playErrorBeep()
       toast.error(t('pos.scan.outOfStock', { name: product.name }))
       return
     }
@@ -63,6 +86,7 @@ export function POSScreen() {
       useCartStore.getState().items.find(item => item.productId === product.id)
         ?.quantity ?? 0
     if (inCart >= product.quantity) {
+      playErrorBeep()
       toast.error(t('pos.scan.maxStock', { qty: product.quantity }))
       return
     }
@@ -83,16 +107,19 @@ export function POSScreen() {
     { enabled: tab === 'catalog' }
   )
 
-  // Keyboard-driven POS flow: F1 new sale, F2 cash payment, F12 print, ESC clear.
+  // Keyboard-driven POS flow for cashier speed.
   usePosShortcuts({
-    onNewSale: () => {
-      useCartStore.getState().clearCart()
-      setCatalogSearch('')
+    onFocusSearch: () => {
       setTab('catalog')
-      toast.info(t('pos.toast.cartCleared'))
+      requestAnimationFrame(() => searchInputRef.current?.focus())
+    },
+    onHoldCart: () => {
+      if (useCartStore.getState().items.length > 0) setHoldOpen(true)
+      else setHeldInvoicesOpen(true)
     },
     onClearCart: () => {
       useCartStore.getState().clearCart()
+      useHeldInvoicesStore.getState().clearActiveHeldInvoice()
       toast.info(t('pos.toast.cartCleared'))
     },
     onPrintReceipt: () => {
@@ -104,9 +131,15 @@ export function POSScreen() {
   })
 
   return (
-    <div className="grid h-full min-h-0 w-full min-w-0 grid-cols-12 gap-4 overflow-y-auto overflow-x-hidden px-3 py-3 sm:px-4 sm:py-4">
+    <div
+      dir="ltr"
+      className="grid h-full min-h-0 w-full min-w-0 grid-cols-12 gap-4 overflow-y-auto overflow-x-hidden px-3 py-3 sm:px-4 sm:py-4"
+    >
       {/* Left: product catalog with fast search, or sales history */}
-      <section className="col-span-12 flex min-w-0 flex-col gap-3 lg:col-span-8">
+      <section
+        dir="rtl"
+        className="col-span-12 flex min-w-0 flex-col gap-3 lg:col-span-8"
+      >
         <div className="flex items-start justify-between gap-3">
           <div>
             <h1 className="text-lg font-semibold">{t('pos.title')}</h1>
@@ -114,29 +147,58 @@ export function POSScreen() {
               {t('pos.description')}
             </p>
           </div>
-          <ToggleGroup
-            type="single"
-            size="sm"
-            variant="outline"
-            value={tab}
-            onValueChange={value => {
-              if (value === 'catalog' || value === 'history') setTab(value)
-            }}
-            aria-label={t('pos.tabLabel')}
-          >
-            <ToggleGroupItem value="catalog">
-              {t('pos.tabCatalog')}
-            </ToggleGroupItem>
-            <ToggleGroupItem value="history">
-              {t('pos.tabHistory')}
-            </ToggleGroupItem>
-          </ToggleGroup>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={cartItemCount === 0}
+              onClick={() => setHoldOpen(true)}
+            >
+              <PauseCircle />
+              {t('pos.held.holdAction')}
+              <kbd className="rounded border px-1 font-mono text-[10px]">
+                F3
+              </kbd>
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setHeldInvoicesOpen(true)}
+            >
+              <Archive />
+              {t('pos.held.openAction')}
+              <Badge
+                variant="secondary"
+                className="ms-1 min-w-5 justify-center px-1"
+              >
+                {heldInvoiceCount}
+              </Badge>
+            </Button>
+            <ToggleGroup
+              type="single"
+              size="sm"
+              variant="outline"
+              value={tab}
+              onValueChange={value => {
+                if (value === 'catalog' || value === 'history') setTab(value)
+              }}
+              aria-label={t('pos.tabLabel')}
+            >
+              <ToggleGroupItem value="catalog">
+                {t('pos.tabCatalog')}
+              </ToggleGroupItem>
+              <ToggleGroupItem value="history">
+                {t('pos.tabHistory')}
+              </ToggleGroupItem>
+            </ToggleGroup>
+          </div>
         </div>
 
         {tab === 'catalog' ? (
           <ProductCatalog
             search={catalogSearch}
             onSearchChange={setCatalogSearch}
+            inputRef={searchInputRef}
           />
         ) : (
           <SalesHistory
@@ -153,7 +215,10 @@ export function POSScreen() {
       </section>
 
       {/* Right: current sale / cart summary */}
-      <section className="col-span-12 flex min-w-0 ps-0 lg:col-span-4 lg:ps-1">
+      <section
+        dir="rtl"
+        className="col-span-12 flex min-w-0 ps-0 lg:col-span-4 lg:ps-1"
+      >
         <CartSummary
           onCheckoutComplete={sale => {
             setReceiptSale(sale)
@@ -190,6 +255,45 @@ export function POSScreen() {
         open={creditNoteOpen}
         onOpenChange={setCreditNoteOpen}
       />
+      <HoldCartDialog open={holdOpen} onOpenChange={setHoldOpen} />
+      <HeldInvoicesModal
+        open={heldInvoicesOpen}
+        onOpenChange={setHeldInvoicesOpen}
+      />
+      <Button
+        type="button"
+        size="icon"
+        variant="secondary"
+        className="fixed inset-e-5 bottom-5 z-40 size-11 rounded-full border shadow-md transition-transform duration-150 hover:scale-105"
+        aria-label={t('pos.shortcuts.openHelp')}
+        title={t('pos.shortcuts.openHelp')}
+        onClick={() => setHelpOpen(true)}
+      >
+        <CircleHelp className="size-5" />
+      </Button>
+      <Sheet open={helpOpen} onOpenChange={setHelpOpen}>
+        <SheetContent side="right" className="w-[min(24rem,90vw)] p-0">
+          <SheetHeader className="border-b pe-12 pt-6 pb-4">
+            <SheetTitle>{t('pos.shortcuts.title')}</SheetTitle>
+            <SheetDescription>
+              {t('pos.shortcuts.description')}
+            </SheetDescription>
+          </SheetHeader>
+          <div dir="rtl" className="space-y-1 p-4">
+            {(['F1', 'F2', 'F3', 'F4', 'F12'] as const).map(key => (
+              <div
+                key={key}
+                className="flex items-center justify-between gap-3 border-b py-3 last:border-0"
+              >
+                <span className="text-sm">{t(`pos.shortcuts.${key}`)}</span>
+                <kbd className="bg-muted text-foreground rounded border px-2 py-1 font-mono text-xs">
+                  {key}
+                </kbd>
+              </div>
+            ))}
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   )
 }

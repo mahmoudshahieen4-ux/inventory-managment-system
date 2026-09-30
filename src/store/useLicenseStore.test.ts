@@ -1,7 +1,6 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { getHardwareId } from '@/services/hardware-id'
-import { generateLicenseKey } from '@/lib/license-key'
 import type { LicenseRecord } from '@/types/license'
 import {
   EXPIRING_SOON_DAYS,
@@ -9,6 +8,12 @@ import {
   getDaysRemaining,
   useLicenseStore,
 } from './useLicenseStore'
+
+const verificationMocks = vi.hoisted(() => ({
+  verifySignedLicense: vi.fn(),
+}))
+
+vi.mock('@/services/licenseVerification', () => verificationMocks)
 
 const DAY_MS = 86_400_000
 
@@ -30,6 +35,10 @@ function resetState(): void {
 describe('useLicenseStore', () => {
   beforeEach(() => {
     resetState()
+    verificationMocks.verifySignedLicense.mockResolvedValue({
+      valid: false,
+      error: 'SIGNATURE',
+    })
   })
 
   it('starts UNREGISTERED and uninitialized', () => {
@@ -50,10 +59,13 @@ describe('useLicenseStore', () => {
 
   it('activates a valid key for this machine and unlocks the app', async () => {
     const { machineId } = await getHardwareId()
-    const key = generateLicenseKey(
-      machineId,
-      new Date(Date.now() + 365 * DAY_MS)
-    )
+    const key = 'signed-license-token'
+    const expirationDate = new Date(Date.now() + 365 * DAY_MS).toISOString()
+    verificationMocks.verifySignedLicense.mockResolvedValue({
+      valid: true,
+      expiresAt: expirationDate,
+      claims: { machineId, status: 'ACTIVE' },
+    })
 
     const record = await useLicenseStore.getState().activate(key)
     const state = useLicenseStore.getState()
@@ -67,10 +79,11 @@ describe('useLicenseStore', () => {
   })
 
   it('rejects a key bound to another machine and stays locked', async () => {
-    const key = generateLicenseKey(
-      'FFFFFFFF',
-      new Date(Date.now() + 365 * DAY_MS)
-    )
+    const key = 'signed-license-for-another-machine'
+    verificationMocks.verifySignedLicense.mockResolvedValue({
+      valid: false,
+      error: 'MACHINE_MISMATCH',
+    })
 
     const record = await useLicenseStore.getState().activate(key)
 

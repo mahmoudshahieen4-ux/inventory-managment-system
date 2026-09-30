@@ -4,7 +4,8 @@ import { devtools } from 'zustand/middleware'
 import { roundMoney } from '@/lib/money'
 import { useInventoryStore } from '@/store/useInventoryStore'
 import type { Product } from '@/types/inventory'
-import type { CartItem } from '@/types/sales'
+import type { CartItem, SaleUnit } from '@/types/sales'
+import { getTotalBoxStock } from '@/lib/dual-unit-stock'
 
 /**
  * Sales tax rate applied to every checkout. `0` disables tax entirely —
@@ -22,6 +23,7 @@ export interface CartState {
   removeFromCart: (productId: string) => void
   /** Sets a new quantity, clamped to >= 0; a quantity of 0 removes the line. */
   updateQuantity: (productId: string, newQty: number) => void
+  setSaleUnit: (productId: string, unit: SaleUnit) => void
   clearCart: () => void
 }
 
@@ -38,17 +40,22 @@ function readStoredCart(): CartItem[] {
     if (!raw) return []
     const parsed: unknown = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
-    return parsed.filter(
-      (item): item is CartItem =>
-        typeof item === 'object' &&
-        item !== null &&
-        typeof item.productId === 'string' &&
-        typeof item.name === 'string' &&
-        typeof item.unitPrice === 'number' &&
-        typeof item.quantity === 'number' &&
-        Number.isFinite(item.quantity) &&
-        item.quantity > 0
-    )
+    return parsed
+      .filter(
+        (item): item is CartItem =>
+          typeof item === 'object' &&
+          item !== null &&
+          typeof item.productId === 'string' &&
+          typeof item.name === 'string' &&
+          typeof item.unitPrice === 'number' &&
+          typeof item.quantity === 'number' &&
+          Number.isFinite(item.quantity) &&
+          item.quantity > 0
+      )
+      .map(item => ({
+        ...item,
+        unit: item.unit === 'carton' ? 'carton' : 'box',
+      }))
   } catch {
     return []
   }
@@ -76,7 +83,11 @@ export const useCartStore = create<CartState>()(
             )
             const currentQty = existing?.quantity ?? 0
             // Never exceed the available stock. No-op when at the ceiling or out of stock.
-            const nextQty = Math.min(currentQty + 1, product.quantity)
+            const available =
+              existing?.unit === 'carton'
+                ? product.cartonQuantity
+                : getTotalBoxStock(product)
+            const nextQty = Math.min(currentQty + 1, available)
             if (nextQty <= currentQty) return state
 
             if (existing) {
@@ -96,9 +107,10 @@ export const useCartStore = create<CartState>()(
                   productId: product.id,
                   sku: product.sku,
                   name: product.name,
-                  purchasePrice: product.purchasePrice,
-                  unitPrice: product.sellingPrice,
+                  purchasePrice: product.boxPurchasePrice,
+                  unitPrice: product.boxSellingPrice,
                   quantity: nextQty,
+                  unit: 'box',
                 },
               ],
             }
@@ -126,10 +138,14 @@ export const useCartStore = create<CartState>()(
 
             // Enforce stock ceiling from the inventory store so manual
             // quantity inputs can never oversell beyond available stock.
-            const stock =
-              useInventoryStore
-                .getState()
-                .products.find(p => p.id === productId)?.quantity ?? Infinity
+            const product = useInventoryStore
+              .getState()
+              .products.find(p => p.id === productId)
+            const stock = product
+              ? item.unit === 'carton'
+                ? product.cartonQuantity
+                : getTotalBoxStock(product)
+              : Infinity
 
             const clamped = Math.min(Math.max(0, newQty), stock)
             if (clamped === 0) {
@@ -153,6 +169,46 @@ export const useCartStore = create<CartState>()(
         ),
 
       clearCart: () => set({ items: [] }, undefined, 'cart/clearCart'),
+
+      setSaleUnit: (productId, unit) =>
+        set(
+          state => {
+            const item = state.items.find(
+              entry => entry.productId === productId
+            )
+            const product = useInventoryStore
+              .getState()
+              .products.find(entry => entry.id === productId)
+            if (!item || !product || item.unit === unit) return state
+            const stock =
+              unit === 'carton'
+                ? product.cartonQuantity
+                : getTotalBoxStock(product)
+            if (stock <= 0) return state
+            const quantity = Math.max(1, Math.min(item.quantity, stock))
+            return {
+              items: state.items.map(entry =>
+                entry.productId === productId
+                  ? {
+                      ...entry,
+                      unit,
+                      quantity,
+                      unitPrice:
+                        unit === 'carton'
+                          ? product.cartonSellingPrice
+                          : product.boxSellingPrice,
+                      purchasePrice:
+                        unit === 'carton'
+                          ? product.cartonPurchasePrice
+                          : product.boxPurchasePrice,
+                    }
+                  : entry
+              ),
+            }
+          },
+          undefined,
+          'cart/setSaleUnit'
+        ),
     }),
     { name: 'cart-store' }
   )

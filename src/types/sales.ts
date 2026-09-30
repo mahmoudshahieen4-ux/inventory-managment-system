@@ -3,6 +3,8 @@
  */
 
 /** A line item currently in the cart, before checkout. */
+export type SaleUnit = 'box' | 'carton'
+
 export interface CartItem {
   productId: string
   sku: string
@@ -10,6 +12,7 @@ export interface CartItem {
   purchasePrice?: number
   unitPrice: number
   quantity: number
+  unit?: SaleUnit
 }
 
 /** An immutable line item recorded on a completed sale. */

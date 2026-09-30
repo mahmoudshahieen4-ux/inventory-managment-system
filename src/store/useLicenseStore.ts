@@ -22,7 +22,8 @@ import {
   syncSubscriptionWithCloud,
   type LicenseSyncResult,
 } from '@/services/licenseSync'
-import { formatLicenseKey, validateLicenseKey } from '@/lib/license-key'
+import { formatLicenseKey } from '@/lib/license-key'
+import { verifySignedLicense } from '@/services/licenseVerification'
 import { logger } from '@/lib/logger'
 import { withTimeout } from '@/lib/timeout'
 import type { LicenseRecord, LicenseStatus } from '@/types/license'
@@ -201,7 +202,36 @@ export const useLicenseStore = create<LicenseState>()(
         set({ loading: true }, false, 'license/initializeStart')
         try {
           await initializeDatabase()
-          const row = await fetchLicenseRow()
+          let row = await fetchLicenseRow()
+
+          // Existing paid rows are untrusted until their server signature is
+          // revalidated against this installation's hardware fingerprint.
+          if (row?.status === 'ACTIVE' && !row.isTrial) {
+            const currentMachineId =
+              machineId ?? (await getHardwareId()).machineId
+            const verification = await verifySignedLicense(
+              currentMachineId,
+              row.licenseKey ?? ''
+            )
+            const signedForMachine =
+              verification.claims?.machineId ===
+                currentMachineId.toUpperCase() &&
+              verification.claims.status === 'ACTIVE'
+            if (!verification.valid || !signedForMachine) {
+              row = { ...row, status: 'EXPIRED' }
+              persistLicense(row).catch(error => {
+                logger.warn(
+                  '[license] failed to persist invalid local license',
+                  {
+                    error,
+                  }
+                )
+              })
+            } else if (verification.expiresAt) {
+              row = { ...row, expirationDate: verification.expiresAt }
+            }
+          }
+
           const couldStartTrial =
             !row ||
             (!row.firstRunDate &&
@@ -298,8 +328,8 @@ export const useLicenseStore = create<LicenseState>()(
 
       activate: async key => {
         const { machineId } = await getHardwareId()
-        const result = validateLicenseKey(key, machineId)
-        if (!result.valid || !result.expirationDate) {
+        const result = await verifySignedLicense(machineId, key)
+        if (!result.valid || !result.expiresAt) {
           toast.error(
             t(`license.lock.error.${String(result.error).toLowerCase()}`)
           )
@@ -309,7 +339,7 @@ export const useLicenseStore = create<LicenseState>()(
           licenseKey: formatLicenseKey(key),
           status: 'ACTIVE',
           activationDate: new Date().toISOString(),
-          expirationDate: result.expirationDate,
+          expirationDate: result.expiresAt,
           isTrial: false,
           firstRunDate: null,
           trialExpirationDate: null,

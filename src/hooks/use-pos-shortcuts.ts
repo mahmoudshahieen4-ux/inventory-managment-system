@@ -4,9 +4,11 @@ import { useCartStore } from '@/store/useCartStore'
 import { getPosActions } from '@/components/pos/pos-actions'
 
 interface PosShortcutHandlers {
-  /** F1 — start a new sale: clear the cart and reset the catalog search. */
-  onNewSale: () => void
-  /** ESC — clear the current cart without starting a fresh sale. */
+  /** F1 focuses the product search/barcode field. */
+  onFocusSearch: () => void
+  /** F3 holds the current cart (or opens held invoices when empty). */
+  onHoldCart: () => void
+  /** F4 / ESC clears the current cart. */
   onClearCart: () => void
   /** F12 — print the currently open receipt (no-op when none is open). */
   onPrintReceipt: () => void
@@ -14,8 +16,10 @@ interface PosShortcutHandlers {
 
 /**
  * Keyboard-driven POS flow for fast cashier operation:
- * - `F1`  → new sale (clears cart + search)
+ * - `F1`  → focus product search / barcode field
  * - `F2`  → cash payment (delegates to the registered `CartSummary` checkout)
+ * - `F3`  → hold the current invoice
+ * - `F4`  → clear the current cart
  * - `F12` → print the open receipt
  * - `ESC` → clear cart
  *
@@ -24,7 +28,8 @@ interface PosShortcutHandlers {
  * inputs' normal typing flow.
  */
 export function usePosShortcuts({
-  onNewSale,
+  onFocusSearch,
+  onHoldCart,
   onClearCart,
   onPrintReceipt,
 }: PosShortcutHandlers): void {
@@ -36,7 +41,7 @@ export function usePosShortcuts({
       switch (e.key) {
         case 'F1': {
           e.preventDefault()
-          onNewSale()
+          onFocusSearch()
           break
         }
         case 'F2': {
@@ -45,6 +50,20 @@ export function usePosShortcuts({
           if (useCartStore.getState().items.length === 0) return
           e.preventDefault()
           getPosActions()?.checkout()
+          break
+        }
+        case 'F3': {
+          if (document.querySelector('[role="dialog"][data-state="open"]')) {
+            return
+          }
+          e.preventDefault()
+          onHoldCart()
+          break
+        }
+        case 'F4': {
+          if (useCartStore.getState().items.length === 0) return
+          e.preventDefault()
+          onClearCart()
           break
         }
         case 'F12': {
@@ -77,5 +96,5 @@ export function usePosShortcuts({
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [onNewSale, onClearCart, onPrintReceipt])
+  }, [onFocusSearch, onHoldCart, onClearCart, onPrintReceipt])
 }

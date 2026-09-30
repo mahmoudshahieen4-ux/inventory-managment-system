@@ -2,9 +2,14 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { render, screen } from '@/test/test-utils'
-import { generateLicenseKey } from '@/lib/license-key'
 import { useLicenseStore } from '@/store/useLicenseStore'
 import { LicenseLockModal } from './LicenseLockModal'
+
+const verificationMocks = vi.hoisted(() => ({
+  verifySignedLicense: vi.fn(),
+}))
+
+vi.mock('@/services/licenseVerification', () => verificationMocks)
 
 // Deterministic hardware fingerprint for every test.
 vi.mock('@/services/hardware-id', () => ({
@@ -34,6 +39,10 @@ function resetState(): void {
 describe('LicenseLockModal', () => {
   beforeEach(() => {
     resetState()
+    verificationMocks.verifySignedLicense.mockResolvedValue({
+      valid: false,
+      error: 'SIGNATURE',
+    })
   })
 
   it('renders a non-dismissable lock screen with the hardware ID and serial input', async () => {
@@ -70,10 +79,13 @@ describe('LicenseLockModal', () => {
     const user = userEvent.setup()
     render(<LicenseLockModal />)
 
-    const key = generateLicenseKey(
-      'AABBCCDD',
-      new Date(Date.now() + 365 * DAY_MS)
-    )
+    const key = 'signed-license-token'
+    const expirationDate = new Date(Date.now() + 365 * DAY_MS).toISOString()
+    verificationMocks.verifySignedLicense.mockResolvedValue({
+      valid: true,
+      expiresAt: expirationDate,
+      claims: { machineId: 'AABBCCDD', status: 'ACTIVE' },
+    })
     await user.type(screen.getByLabelText('Serial Key'), key)
     await user.click(screen.getByRole('button', { name: 'Activate Now' }))
 
@@ -85,6 +97,10 @@ describe('LicenseLockModal', () => {
   it('keeps the app locked and shows an inline error for an invalid key', async () => {
     const user = userEvent.setup()
     render(<LicenseLockModal />)
+    verificationMocks.verifySignedLicense.mockResolvedValue({
+      valid: false,
+      error: 'MACHINE_MISMATCH',
+    })
 
     await user.type(screen.getByLabelText('Serial Key'), '1234-5678-9ABC-DEF0')
     await user.click(screen.getByRole('button', { name: 'Activate Now' }))

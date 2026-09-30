@@ -11,6 +11,10 @@
  */
 import { getLicense, saveLicense } from '@/services/localLicenseRepository'
 import { getSupabaseClient, isSupabaseConfigured } from '@/services/supabase'
+import {
+  verifySignedLicense,
+  type LicenseTokenClaims,
+} from '@/services/licenseVerification'
 import type { LicenseRecord, LicenseStatus } from '@/types/license'
 
 /** Status values stored in the Supabase `subscriptions` table. */
@@ -19,9 +23,7 @@ export type CloudSubscriptionStatus = 'ACTIVE' | 'EXPIRED' | 'BLOCKED'
 /** Raw row shape returned by the Supabase Data API (snake_case columns). */
 interface SubscriptionRow {
   machine_id: string
-  client_name: string | null
-  status: string
-  expires_at: string
+  license_token: string | null
   updated_at: string
 }
 
@@ -32,6 +34,8 @@ export type LicenseSyncOutcome =
   | 'UNCHANGED'
   /** No cloud row for this machine → local state kept. */
   | 'NO_SUBSCRIPTION'
+  /** A cloud row without a valid signature is never applied. */
+  | 'INVALID_SIGNATURE'
   /** Network/API failure → local state kept (graceful offline fallback). */
   | 'OFFLINE'
   /** Supabase not configured (browser dev / tests) → no-op. */
@@ -46,39 +50,31 @@ export interface LicenseSyncResult {
 }
 
 /**
- * Maps a cloud subscription row to the local license status. The comparison
- * runs in UTC: `expires_at` is a `timestamptz` ISO string and `Date.now()`
- * is UTC-based, so client timezone or wall-clock tricks cannot extend a
- * subscription. `BLOCKED` always locks regardless of the expiry instant.
+ * Maps authenticated claims to the local status. Unsigned database columns
+ * are deliberately not consulted for access decisions.
  */
 export function resolveLocalStatus(
-  cloudStatus: string,
-  expiresAt: string,
+  claims: LicenseTokenClaims,
   now: Date = new Date()
 ): Extract<LicenseStatus, 'ACTIVE' | 'EXPIRED'> {
-  if (cloudStatus === 'BLOCKED' || cloudStatus === 'EXPIRED') return 'EXPIRED'
-  const expires = Date.parse(expiresAt)
-  if (Number.isNaN(expires)) {
-    // Unparseable vendor data — fail safe: lock instead of granting access.
+  if (claims.status === 'BLOCKED' || claims.exp * 1000 <= now.getTime()) {
     return 'EXPIRED'
   }
-  // The expiry instant itself is already past (>=) — same rule as the
-  // offline key validator in `license-key.ts`.
-  return now.getTime() >= expires ? 'EXPIRED' : 'ACTIVE'
+  return 'ACTIVE'
 }
 
-/** Merges a cloud subscription row into the local license record. */
+/** Merges a verified signed token into the local license record. */
 export function mergeCloudSubscription(
   local: LicenseRecord | null,
   row: SubscriptionRow,
+  claims: LicenseTokenClaims,
   now: Date = new Date()
 ): LicenseRecord {
   return {
-    licenseKey: local?.licenseKey ?? null,
-    status: resolveLocalStatus(row.status, row.expires_at, now),
+    licenseKey: row.license_token,
+    status: resolveLocalStatus(claims, now),
     activationDate: local?.activationDate ?? null,
-    // The cloud expiry is authoritative — clients never compute their own.
-    expirationDate: row.expires_at,
+    expirationDate: new Date(claims.exp * 1000).toISOString(),
     isTrial: false,
     firstRunDate: local?.firstRunDate ?? null,
     trialExpirationDate: local?.trialExpirationDate ?? null,
@@ -94,6 +90,7 @@ function isSameSubscription(
 ): boolean {
   return Boolean(
     local &&
+    local.licenseKey === merged.licenseKey &&
     local.status === merged.status &&
     local.expirationDate === merged.expirationDate &&
     local.isTrial === merged.isTrial
@@ -102,9 +99,8 @@ function isSameSubscription(
 
 /**
  * Reconciles the local license with the Supabase subscription for a machine.
- * Never throws: every failure path returns a result so the app can continue
- * with the local state (offline-first). A `BLOCKED` cloud status maps to the
- * local `EXPIRED` status, which locks the app behind the renewal screen.
+ * Never trusts cloud status or expiry columns: the returned token must verify
+ * against the embedded Ed25519 public key and bind to this machine.
  */
 export async function syncSubscriptionWithCloud(
   machineId: string
@@ -119,8 +115,8 @@ export async function syncSubscriptionWithCloud(
   try {
     const { data, error } = await getSupabaseClient()
       .from('subscriptions')
-      .select('machine_id, client_name, status, expires_at, updated_at')
-      .eq('machine_id', machineId)
+      .select('machine_id, license_token, updated_at')
+      .eq('machine_id', machineId.toUpperCase())
       .maybeSingle()
 
     if (error) {
@@ -138,7 +134,20 @@ export async function syncSubscriptionWithCloud(
     return { outcome: 'NO_SUBSCRIPTION', record: local }
   }
 
-  const merged = mergeCloudSubscription(local, row)
+  if (
+    !row.license_token ||
+    row.machine_id.toUpperCase() !== machineId.toUpperCase()
+  ) {
+    return { outcome: 'INVALID_SIGNATURE', record: local }
+  }
+
+  const verification = await verifySignedLicense(machineId, row.license_token)
+  const claims = verification.claims
+  if (!claims || claims.machineId !== machineId.toUpperCase()) {
+    return { outcome: 'INVALID_SIGNATURE', record: local }
+  }
+
+  const merged = mergeCloudSubscription(local, row, claims)
   if (isSameSubscription(local, merged)) {
     return { outcome: 'UNCHANGED', record: local }
   }

@@ -79,6 +79,7 @@ function buildSale(id: string): Sale {
         purchasePrice: 1.2,
         unitPrice: 2.49,
         quantity: 2,
+        unit: 'box',
         lineTotal: 4.98,
         profit: 2.58,
       },
@@ -131,6 +132,91 @@ describe('db service — checkout transactions', () => {
     ).rejects.toThrow('disk I/O error')
 
     expect(transactionStatements()).toEqual(['BEGIN IMMEDIATE', 'ROLLBACK'])
+  })
+
+  it('writes carton and loose-box stock in the same checkout transaction', async () => {
+    setTauriRuntime(true)
+    const db = await importDb()
+
+    await db.persistSaleAtomic(buildSale('sale-dual-stock'), [
+      {
+        productId: 'prod-004',
+        newQuantity: 49,
+        cartonQuantity: 4,
+        boxQuantity: 1,
+      },
+    ])
+
+    const stockWrite = dbMocks.execute.mock.calls.find(([query]) =>
+      query.includes('carton_quantity = $2')
+    )
+    expect(stockWrite?.[1]).toEqual([49, 4, 1, 'prod-004'])
+    expect(transactionStatements()).toEqual(['BEGIN IMMEDIATE', 'COMMIT'])
+  })
+
+  it('deletes a held invoice inside the sale transaction', async () => {
+    setTauriRuntime(true)
+    const db = await importDb()
+
+    await db.persistSaleAtomic(buildSale('sale-from-held'), [], 'held-123')
+
+    expect(executedStatements().at(-2)).toContain('DELETE FROM held_invoices')
+    expect(transactionStatements()).toEqual(['BEGIN IMMEDIATE', 'COMMIT'])
+  })
+
+  it('deducts dated batches in FEFO order in the checkout transaction', async () => {
+    setTauriRuntime(true)
+    const db = await importDb()
+    dbMocks.select.mockImplementation((query: string) => {
+      if (query.includes('SELECT quantity FROM products')) {
+        return Promise.resolve([{ quantity: 20 }])
+      }
+      if (query.includes('FROM product_batches')) {
+        return Promise.resolve([
+          { id: 'batch-first', quantity: 3 },
+          { id: 'batch-next', quantity: 8 },
+        ])
+      }
+      return Promise.resolve([])
+    })
+
+    await db.persistSaleAtomic(buildSale('sale-fefo'), [
+      { productId: 'prod-004', newQuantity: 15 },
+    ])
+
+    const batchUpdates = dbMocks.execute.mock.calls.filter(([query]) =>
+      query.startsWith('UPDATE product_batches SET quantity')
+    )
+    expect(batchUpdates.map(([, values]) => values)).toEqual([
+      [3, 'batch-first'],
+      [2, 'batch-next'],
+    ])
+    expect(transactionStatements()).toEqual(['BEGIN IMMEDIATE', 'COMMIT'])
+  })
+
+  it('commits all shipment lines and audit rows in one transaction', async () => {
+    setTauriRuntime(true)
+    const db = await importDb()
+    dbMocks.select.mockImplementation((query: string) =>
+      query.includes('SELECT carton_quantity')
+        ? Promise.resolve([
+            { carton_quantity: 1, box_quantity: 2, boxes_per_carton: 12 },
+          ])
+        : Promise.resolve([])
+    )
+
+    await db.addShipmentToInventory([
+      { productId: 'prod-004', unit: 'carton', quantity: 2, purchasePrice: 18 },
+      { productId: 'prod-004', unit: 'box', quantity: 3, purchasePrice: 1.8 },
+    ])
+
+    expect(transactionStatements()).toEqual(['BEGIN IMMEDIATE', 'COMMIT'])
+    expect(
+      dbMocks.execute.mock.calls.filter(([query]) =>
+        query.includes('SET carton_quantity = carton_quantity + $1')
+      )
+    ).toHaveLength(2)
+    expect(writeCount('INSERT INTO stock_transactions')).toBe(2)
   })
 
   it('heals a transaction left open on the connection instead of failing the sale', async () => {

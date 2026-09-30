@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 
 import { useAuthStore } from '@/store/useAuthStore'
 import { initialProducts, useInventoryStore } from '@/store/useInventoryStore'
-import { render, screen } from '@/test/test-utils'
+import { fireEvent, render, screen } from '@/test/test-utils'
 import { InventoryTable } from './InventoryTable'
 
 describe('InventoryTable', () => {
@@ -173,13 +173,13 @@ describe('InventoryTable', () => {
     // The dedicated unit column header was dropped in favor of the inline unit.
     expect(screen.queryByText('Unit')).not.toBeInTheDocument()
 
-    // Every product still renders its unit next to the quantity.
+    // Inventory shows both stock units beside each other.
     const milkRow = screen.getByText('Whole Milk 1L').closest('tr')
-    expect(milkRow?.textContent).toContain('علبة')
+    expect(milkRow?.textContent).toContain('0 Carton + 5 Box/Piece')
 
-    // Carton products surface their box count inline.
+    // Carton stock is reported independently from loose box stock.
     const cartonRow = screen.getByText('Espresso Beans 1kg').closest('tr')
-    expect(cartonRow?.textContent).toContain('12 boxes')
+    expect(cartonRow?.textContent).toContain('0 Carton + 0 Box/Piece')
   })
 
   it('combines category, search and status filters and resets to all categories', async () => {
@@ -253,7 +253,7 @@ describe('InventoryTable', () => {
 
     expect(screen.getByText('Edit Product')).toBeInTheDocument()
     expect(screen.getByLabelText('Name*')).toHaveValue('Espresso Beans 1kg')
-    expect(screen.getByLabelText('Quantity*')).toHaveValue(0)
+    expect(screen.getByLabelText('Cartons in Stock*')).toHaveValue(0)
   })
 
   it('creates a product through the modal and shows it in the table', async () => {
@@ -268,10 +268,14 @@ describe('InventoryTable', () => {
     await user.click(screen.getByRole('button', { name: /show more options/i }))
     await user.type(screen.getByLabelText('SKU'), 'TEA-009')
 
-    await user.type(screen.getByLabelText('Quantity*'), '40')
+    fireEvent.change(screen.getByLabelText('Loose Boxes/Pieces in Stock*'), {
+      target: { value: '40' },
+    })
     await user.type(screen.getByLabelText('Min Threshold*'), '10')
-    await user.type(screen.getByLabelText('Purchase Price*'), '3')
-    await user.type(screen.getByLabelText('Selling Price*'), '8')
+    await user.type(screen.getByLabelText('Box/Piece Purchase Price*'), '3')
+    await user.type(screen.getByLabelText('Box/Piece Selling Price*'), '8')
+    await user.type(screen.getByLabelText('Carton Purchase Price*'), '36')
+    await user.type(screen.getByLabelText('Carton Selling Price*'), '96')
 
     await user.click(screen.getByRole('button', { name: 'Create Product' }))
 

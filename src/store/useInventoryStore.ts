@@ -10,16 +10,20 @@ import {
 } from '@/lib/product-unit'
 import {
   addStockToProduct,
+  addShipmentToInventory,
   deleteProductRow,
+  fetchExpiringProductBatches,
   fetchProducts,
   initializeDatabase,
   insertProduct,
   isTauriRuntime,
   updateProductRow,
 } from '@/services/db'
+import { deductBoxStock, getTotalBoxStock } from '@/lib/dual-unit-stock'
+import { planFefoDeductions } from '@/lib/fefo'
 import { useAuthStore } from '@/store/useAuthStore'
-import type { StockUpdate } from '@/services/db'
-import type { NewProduct, Product } from '@/types/inventory'
+import type { ShipmentLineInput, StockUpdate } from '@/services/db'
+import type { NewProduct, Product, ProductBatch } from '@/types/inventory'
 
 /**
  * Seed data used to initialize the inventory store.
@@ -29,7 +33,7 @@ import type { NewProduct, Product } from '@/types/inventory'
  * - LOW_STOCK: quantity is between 1 and minThreshold (inclusive)
  * - IN_STOCK: quantity is above minThreshold
  */
-export const initialProducts: Product[] = [
+const seedProducts: ProductCoerceInput[] = [
   // OUT_OF_STOCK
   {
     id: 'prod-001',
@@ -43,6 +47,10 @@ export const initialProducts: Product[] = [
     category: 'Coffee',
     unit: 'كرتونة',
     unitsPerCarton: 12,
+    cartonPurchasePrice: 12.5,
+    cartonSellingPrice: 24.99,
+    boxPurchasePrice: 12.5 / 12,
+    boxSellingPrice: 24.99 / 12,
   },
   // LOW_STOCK (below threshold)
   {
@@ -98,8 +106,11 @@ export const initialProducts: Product[] = [
   },
 ]
 
+export const initialProducts: Product[] = seedProducts.map(coerceProduct)
+
 interface InventoryState {
   products: Product[]
+  productBatches: ProductBatch[]
   addProduct: (product: NewProduct) => Product
   updateProduct: (id: string, updates: Partial<NewProduct>) => void
   /**
@@ -116,6 +127,18 @@ interface InventoryState {
     addedQuantity: number,
     costPrice?: number
   ) => void
+  /** Calculates a box sale, unpacking the minimum cartons without mutating state. */
+  deductBoxStock: (
+    productId: string,
+    requestedBoxes: number
+  ) => StockUpdate | null
+  deductStock: (
+    productId: string,
+    quantity: number,
+    unit?: 'carton' | 'box'
+  ) => StockUpdate | null
+  /** Commits all shipment lines atomically, then mirrors the returned products. */
+  addShipment: (lines: ShipmentLineInput[]) => Promise<void>
   /**
    * Applies post-checkout quantity changes to the UI state only — the
    * authoritative write already happened inside the atomic sale transaction,
@@ -148,6 +171,13 @@ interface ProductCoerceInput {
   category?: string
   unit?: string
   unitsPerCarton?: number | string
+  cartonQuantity?: number | string
+  boxQuantity?: number | string
+  boxesPerCarton?: number | string
+  cartonSellingPrice?: number | string
+  boxSellingPrice?: number | string
+  cartonPurchasePrice?: number | string
+  boxPurchasePrice?: number | string
 }
 
 /**
@@ -156,23 +186,51 @@ interface ProductCoerceInput {
  * creating).
  */
 function coerceProduct(product: ProductCoerceInput): Product {
+  const boxesPerCarton = Math.max(
+    1,
+    Number(product.boxesPerCarton ?? product.unitsPerCarton) || 12
+  )
+  const cartonQuantity = Math.max(0, Number(product.cartonQuantity) || 0)
+  const boxQuantity = Math.max(
+    0,
+    product.boxQuantity === undefined
+      ? Number(product.quantity) || 0
+      : Number(product.boxQuantity) || 0
+  )
+  const boxSellingPrice =
+    Number(product.boxSellingPrice ?? product.sellingPrice) || 0
+  const boxPurchasePrice =
+    Number(product.boxPurchasePrice ?? product.purchasePrice) || 0
   return {
     id: product.id ?? createProductId(),
     name: product.name ?? '',
     sku: product.sku?.trim() || createProductSku(),
     barcode: product.barcode?.trim() || undefined,
-    quantity: Number(product.quantity) || 0,
+    quantity: getTotalBoxStock({ cartonQuantity, boxQuantity, boxesPerCarton }),
     minThreshold: Number(product.minThreshold) || 0,
-    purchasePrice: Number(product.purchasePrice) || 0,
-    sellingPrice: Number(product.sellingPrice) || 0,
+    purchasePrice: boxPurchasePrice,
+    sellingPrice: boxSellingPrice,
     category: product.category ?? '',
     // Every product has a unit: blank/legacy values fall back to "قطعة" so the
     // UI and SQLite never hold an "unspecified" unit.
     unit: normalizeProductUnit(product.unit) || DEFAULT_PRODUCT_UNIT,
     unitsPerCarton: resolveUnitsPerCarton({
       unit: product.unit,
-      unitsPerCarton: Number(product.unitsPerCarton),
+      unitsPerCarton: boxesPerCarton,
     }),
+    cartonQuantity,
+    boxQuantity,
+    boxesPerCarton,
+    cartonSellingPrice:
+      product.cartonSellingPrice === undefined
+        ? boxSellingPrice * boxesPerCarton
+        : Number(product.cartonSellingPrice) || 0,
+    boxSellingPrice,
+    cartonPurchasePrice:
+      product.cartonPurchasePrice === undefined
+        ? boxPurchasePrice * boxesPerCarton
+        : Number(product.cartonPurchasePrice) || 0,
+    boxPurchasePrice,
   }
 }
 
@@ -180,6 +238,7 @@ export const useInventoryStore = create<InventoryState>()(
   devtools(
     (set, get) => ({
       products: initialProducts,
+      productBatches: [],
 
       addProduct: product => {
         const newProduct: Product = coerceProduct(product)
@@ -196,7 +255,32 @@ export const useInventoryStore = create<InventoryState>()(
         const current = get().products.find(product => product.id === id)
         const base = current ?? get().products[0]
         if (!base) return
-        const merged = coerceProduct({ ...base, ...updates })
+        const normalizedUpdates: Partial<NewProduct> = { ...updates }
+        if (
+          updates.quantity !== undefined &&
+          updates.cartonQuantity === undefined &&
+          updates.boxQuantity === undefined
+        ) {
+          normalizedUpdates.cartonQuantity = 0
+          normalizedUpdates.boxQuantity = updates.quantity
+        }
+        if (
+          updates.purchasePrice !== undefined &&
+          updates.boxPurchasePrice === undefined
+        ) {
+          normalizedUpdates.boxPurchasePrice = updates.purchasePrice
+          normalizedUpdates.cartonPurchasePrice =
+            updates.purchasePrice * base.boxesPerCarton
+        }
+        if (
+          updates.sellingPrice !== undefined &&
+          updates.boxSellingPrice === undefined
+        ) {
+          normalizedUpdates.boxSellingPrice = updates.sellingPrice
+          normalizedUpdates.cartonSellingPrice =
+            updates.sellingPrice * base.boxesPerCarton
+        }
+        const merged = coerceProduct({ ...base, ...normalizedUpdates })
         set(
           state => ({
             products: state.products.map(product =>
@@ -212,6 +296,7 @@ export const useInventoryStore = create<InventoryState>()(
       },
 
       addStock: (productId, addedQuantity, costPrice) => {
+        if (!Number.isInteger(addedQuantity) || addedQuantity <= 0) return
         set(
           state => ({
             products: state.products.map(product =>
@@ -219,9 +304,13 @@ export const useInventoryStore = create<InventoryState>()(
                 ? {
                     ...product,
                     quantity: product.quantity + addedQuantity,
+                    boxQuantity: product.boxQuantity + addedQuantity,
                     // Refresh purchase cost only when a new one is supplied.
                     ...(costPrice !== undefined
-                      ? { purchasePrice: costPrice }
+                      ? {
+                          purchasePrice: costPrice,
+                          boxPurchasePrice: costPrice,
+                        }
                       : {}),
                   }
                 : product
@@ -240,16 +329,194 @@ export const useInventoryStore = create<InventoryState>()(
         )
       },
 
+      deductBoxStock: (productId, requestedBoxes) => {
+        const product = get().products.find(item => item.id === productId)
+        if (!product) return null
+        const result = deductBoxStock(product, requestedBoxes)
+        if (!result) return null
+        return {
+          productId,
+          cartonQuantity: result.cartonQuantity,
+          boxQuantity: result.boxQuantity,
+          newQuantity: getTotalBoxStock({ ...product, ...result }),
+        }
+      },
+
+      deductStock: (productId, quantity, unit = 'box') => {
+        const product = get().products.find(item => item.id === productId)
+        if (!product || !Number.isInteger(quantity) || quantity <= 0)
+          return null
+        let result: StockUpdate | null
+        const deductedBoxes =
+          unit === 'carton' ? quantity * product.boxesPerCarton : quantity
+        if (unit === 'carton') {
+          if (quantity > product.cartonQuantity) return null
+          const cartonQuantity = product.cartonQuantity - quantity
+          result = {
+            productId,
+            cartonQuantity,
+            boxQuantity: product.boxQuantity,
+            newQuantity:
+              cartonQuantity * product.boxesPerCarton + product.boxQuantity,
+          }
+        } else {
+          result = get().deductBoxStock(productId, quantity)
+        }
+        if (!result) return null
+        const plan = planFefoDeductions(
+          get().productBatches.filter(batch => batch.productId === productId),
+          deductedBoxes
+        )
+        return { ...result, batchDeductions: plan.deductions }
+      },
+
+      addShipment: async lines => {
+        if (lines.length === 0) return
+        for (const line of lines) {
+          if (
+            !Number.isInteger(line.quantity) ||
+            line.quantity <= 0 ||
+            (line.unit !== 'carton' && line.unit !== 'box') ||
+            (line.purchasePrice !== undefined &&
+              (!Number.isFinite(line.purchasePrice) || line.purchasePrice < 0))
+          ) {
+            throw new Error('pos-stock: invalid shipment line')
+          }
+          if (!get().products.some(product => product.id === line.productId)) {
+            throw new Error(`pos-stock: product not found (${line.productId})`)
+          }
+        }
+        const userId = useAuthStore.getState().currentUser?.username ?? 'admin'
+        if (isTauriRuntime()) {
+          const updatedProducts = await addShipmentToInventory(lines, userId)
+          const productBatches = await fetchExpiringProductBatches()
+          set(
+            { products: updatedProducts, productBatches },
+            undefined,
+            'inventory/addShipment'
+          )
+          return
+        }
+
+        set(
+          state => ({
+            productBatches: [
+              ...state.productBatches,
+              ...lines
+                .filter(line => line.expiryDate)
+                .map(line => {
+                  const product = state.products.find(
+                    entry => entry.id === line.productId
+                  )
+                  return {
+                    id: crypto.randomUUID(),
+                    productId: line.productId,
+                    batchNumber: line.batchNumber,
+                    quantity:
+                      line.quantity *
+                      (line.unit === 'carton'
+                        ? (product?.boxesPerCarton ?? 1)
+                        : 1),
+                    purchasePrice: line.purchasePrice,
+                    expiryDate: line.expiryDate,
+                    createdAt: new Date().toISOString(),
+                  }
+                }),
+            ],
+            products: state.products.map(product => {
+              const matchingLines = lines.filter(
+                line => line.productId === product.id
+              )
+              if (matchingLines.length === 0) return product
+              const cartonQuantity = matchingLines.reduce(
+                (quantity, line) =>
+                  quantity + (line.unit === 'carton' ? line.quantity : 0),
+                product.cartonQuantity
+              )
+              const boxQuantity = matchingLines.reduce(
+                (quantity, line) =>
+                  quantity + (line.unit === 'box' ? line.quantity : 0),
+                product.boxQuantity
+              )
+              const latestCostLine = [...matchingLines]
+                .reverse()
+                .find(line => line.purchasePrice !== undefined)
+              const latestCartonCost = [...matchingLines]
+                .reverse()
+                .find(
+                  line =>
+                    line.unit === 'carton' && line.purchasePrice !== undefined
+                )?.purchasePrice
+              const latestBoxCost = [...matchingLines]
+                .reverse()
+                .find(
+                  line =>
+                    line.unit === 'box' && line.purchasePrice !== undefined
+                )?.purchasePrice
+              const legacyPurchasePrice = latestCostLine?.purchasePrice
+              const boxPurchasePrice =
+                latestBoxCost ??
+                (latestCostLine?.unit === 'carton'
+                  ? (legacyPurchasePrice ?? 0) / product.boxesPerCarton
+                  : product.boxPurchasePrice)
+              return {
+                ...product,
+                cartonQuantity,
+                boxQuantity,
+                quantity: getTotalBoxStock({
+                  cartonQuantity,
+                  boxQuantity,
+                  boxesPerCarton: product.boxesPerCarton,
+                }),
+                ...(legacyPurchasePrice !== undefined
+                  ? {
+                      boxPurchasePrice,
+                      purchasePrice: boxPurchasePrice,
+                      cartonPurchasePrice:
+                        latestCartonCost ?? product.cartonPurchasePrice,
+                    }
+                  : {}),
+              }
+            }),
+          }),
+          undefined,
+          'inventory/addShipment'
+        )
+      },
+
       applyStockDeltas: updates => {
         if (updates.length === 0) return
         set(
           state => ({
+            productBatches: state.productBatches.map(batch => {
+              const update = updates.find(
+                entry => entry.productId === batch.productId
+              )
+              const deduction = update?.batchDeductions?.find(
+                entry => entry.batchId === batch.id
+              )
+              return deduction
+                ? {
+                    ...batch,
+                    quantity: Math.max(0, batch.quantity - deduction.quantity),
+                  }
+                : batch
+            }),
             products: state.products.map(product => {
               const update = updates.find(
                 entry => entry.productId === product.id
               )
               return update
-                ? { ...product, quantity: update.newQuantity }
+                ? {
+                    ...product,
+                    quantity: update.newQuantity,
+                    ...(update.cartonQuantity !== undefined
+                      ? { cartonQuantity: update.cartonQuantity }
+                      : {}),
+                    ...(update.boxQuantity !== undefined
+                      ? { boxQuantity: update.boxQuantity }
+                      : {}),
+                  }
                 : product
             }),
           }),
@@ -273,7 +540,11 @@ export const useInventoryStore = create<InventoryState>()(
         if (!isTauriRuntime()) return
         try {
           await initializeDatabase()
-          const stored = await fetchProducts()
+          const [stored, productBatches] = await Promise.all([
+            fetchProducts(),
+            fetchExpiringProductBatches(),
+          ])
+          set({ productBatches }, undefined, 'inventory/hydrateBatches')
           if (stored.length > 0) {
             set({ products: stored }, undefined, 'inventory/hydrate')
           } else {

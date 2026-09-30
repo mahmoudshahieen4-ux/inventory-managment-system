@@ -32,7 +32,8 @@ function pressKey(key: string, init: KeyboardEventInit = {}): void {
 }
 
 describe('usePosShortcuts', () => {
-  const onNewSale = vi.fn()
+  const onFocusSearch = vi.fn()
+  const onHoldCart = vi.fn()
   const onClearCart = vi.fn()
   const onPrintReceipt = vi.fn()
   const checkout = vi.fn()
@@ -51,15 +52,20 @@ describe('usePosShortcuts', () => {
 
   function mount(): { unmount: () => void } {
     const view = renderHook(() =>
-      usePosShortcuts({ onNewSale, onClearCart, onPrintReceipt })
+      usePosShortcuts({
+        onFocusSearch,
+        onHoldCart,
+        onClearCart,
+        onPrintReceipt,
+      })
     )
     return { unmount: view.unmount }
   }
 
-  it('F1 starts a new sale', () => {
+  it('F1 focuses product search', () => {
     mount()
     pressKey('F1')
-    expect(onNewSale).toHaveBeenCalledTimes(1)
+    expect(onFocusSearch).toHaveBeenCalledTimes(1)
   })
 
   it('F2 triggers the registered checkout when the cart has items', () => {
@@ -86,6 +92,19 @@ describe('usePosShortcuts', () => {
     mount()
     pressKey('F12')
     expect(onPrintReceipt).toHaveBeenCalledTimes(1)
+  })
+
+  it('F3 holds the current invoice', () => {
+    mount()
+    pressKey('F3')
+    expect(onHoldCart).toHaveBeenCalledTimes(1)
+  })
+
+  it('F4 clears a non-empty cart', () => {
+    useCartStore.setState({ items: [makeItem()] })
+    mount()
+    pressKey('F4')
+    expect(onClearCart).toHaveBeenCalledTimes(1)
   })
 
   it('ESC clears a non-empty cart', () => {
@@ -126,13 +145,13 @@ describe('usePosShortcuts', () => {
     pressKey('F1', { ctrlKey: true })
     pressKey('F1', { metaKey: true })
     pressKey('F1', { altKey: true })
-    expect(onNewSale).not.toHaveBeenCalled()
+    expect(onFocusSearch).not.toHaveBeenCalled()
   })
 
   it('detaches the listener on unmount', () => {
     const { unmount } = mount()
     unmount()
     pressKey('F1')
-    expect(onNewSale).not.toHaveBeenCalled()
+    expect(onFocusSearch).not.toHaveBeenCalled()
   })
 })

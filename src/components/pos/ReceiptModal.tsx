@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/dialog'
 import { formatTransactionTimestamp } from '@/lib/date-time'
 import { formatMoney } from '@/lib/money'
-import { STORE_INFO } from '@/lib/store-config'
+import { SUPPORT_INFO } from '@/constants/support'
 import type { Sale } from '@/types/sales'
 
 interface ReceiptModalProps {
@@ -67,10 +67,9 @@ export function ReceiptModal({ sale, open, onOpenChange }: ReceiptModalProps) {
           {/* Store header */}
           <div className="text-center">
             <p className="text-sm font-bold tracking-widest">
-              {t('pos.receipt.storeName')}
+              {SUPPORT_INFO.storeName}
             </p>
-            <p className="mt-1 text-neutral-600">{STORE_INFO.address}</p>
-            <p className="text-neutral-600">{STORE_INFO.phone}</p>
+            <p className="mt-1 text-neutral-600">{SUPPORT_INFO.phone}</p>
           </div>
 
           <ReceiptDivider />
@@ -127,7 +126,7 @@ export function ReceiptModal({ sale, open, onOpenChange }: ReceiptModalProps) {
                 >
                   <td className="py-1.5 align-top">{item.name}</td>
                   <td className="py-1.5 text-center align-top tabular-nums">
-                    {item.quantity}
+                    {item.quantity} {t(`inventory.unit.${item.unit ?? 'box'}`)}
                   </td>
                   <td className="py-1.5 text-end align-top tabular-nums">
                     {formatMoney(item.unitPrice)}

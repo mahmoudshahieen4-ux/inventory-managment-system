@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useTheme } from '@/hooks/use-theme'
 import { executeCommand, useCommandContext } from '@/lib/commands'
+import { SUPPORT_INFO } from '@/constants/support'
 import {
   LogOut,
   Settings,
@@ -19,7 +20,9 @@ export function TitleBarLeftActions() {
     <div className="flex items-center gap-1">
       <div className="me-2 flex items-center gap-1.5 px-1 text-primary">
         <Store className="size-4" aria-hidden="true" />
-        <span className="text-xs font-bold tracking-wide">Hypeer Market</span>
+        <span className="text-xs font-bold tracking-wide">
+          {SUPPORT_INFO.storeName}
+        </span>
       </div>
     </div>
   )
@@ -115,7 +118,9 @@ interface TitleBarTitleProps {
  * Centered title for the title bar.
  * Uses absolute positioning to stay centered regardless of other content.
  */
-export function TitleBarTitle({ title = 'Tauri App' }: TitleBarTitleProps) {
+export function TitleBarTitle({
+  title = SUPPORT_INFO.storeName,
+}: TitleBarTitleProps) {
   return (
     <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
       <span className="text-sm font-medium text-foreground/80">{title}</span>
@@ -129,7 +134,9 @@ export function TitleBarTitle({ title = 'Tauri App' }: TitleBarTitleProps) {
  *
  * For more control, use TitleBarLeftActions, TitleBarRightActions, and TitleBarTitle separately.
  */
-export function TitleBarContent({ title = 'Tauri App' }: TitleBarTitleProps) {
+export function TitleBarContent({
+  title = SUPPORT_INFO.storeName,
+}: TitleBarTitleProps) {
   return (
     <>
       <TitleBarLeftActions />

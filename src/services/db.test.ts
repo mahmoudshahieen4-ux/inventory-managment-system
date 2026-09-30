@@ -38,6 +38,13 @@ describe('db service', () => {
       purchasePrice: 1,
       sellingPrice: 2,
       category: 'Test',
+      cartonQuantity: 0,
+      boxQuantity: 1,
+      boxesPerCarton: 12,
+      cartonSellingPrice: 24,
+      boxSellingPrice: 2,
+      cartonPurchasePrice: 12,
+      boxPurchasePrice: 1,
     }
     await expect(fetchProducts()).rejects.toThrow()
     await expect(findProductByBarcode('6291041500213')).rejects.toThrow()

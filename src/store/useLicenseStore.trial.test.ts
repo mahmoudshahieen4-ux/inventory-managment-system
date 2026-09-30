@@ -17,6 +17,19 @@ const dbMocks = vi.hoisted(() => ({
 
 vi.mock('@/services/db', () => dbMocks)
 
+const verificationMocks = vi.hoisted(() => ({
+  verifySignedLicense: vi.fn(),
+}))
+
+vi.mock('@/services/licenseVerification', () => verificationMocks)
+vi.mock('@/services/hardware-id', () => ({
+  getHardwareId: () =>
+    Promise.resolve({
+      machineId: 'AABBCCDD',
+      displayId: 'AABB-CCDD-1122-3344',
+    }),
+}))
+
 function resetState(): void {
   useLicenseStore.setState({
     licenseKey: null,
@@ -35,6 +48,10 @@ describe('useLicenseStore · 3-day trial', () => {
   beforeEach(() => {
     resetState()
     vi.clearAllMocks()
+    verificationMocks.verifySignedLicense.mockResolvedValue({
+      valid: false,
+      error: 'SIGNATURE',
+    })
   })
 
   it('auto-starts a 3-day TRIAL on first launch (no stored row)', async () => {
@@ -75,22 +92,29 @@ describe('useLicenseStore · 3-day trial', () => {
   })
 
   it('does NOT restart a trial for a stored ACTIVE license', async () => {
+    const licenseKey = 'signed-local-token'
+    const expirationDate = new Date(Date.now() + 30 * DAY_MS).toISOString()
     dbMocks.fetchLicenseRow.mockResolvedValue({
-      licenseKey: 'ABCD-EF01',
+      licenseKey,
       status: 'ACTIVE',
       activationDate: new Date().toISOString(),
-      expirationDate: new Date(Date.now() + 30 * DAY_MS).toISOString(),
+      expirationDate,
       isTrial: false,
       firstRunDate: null,
       trialExpirationDate: null,
       lastActiveTime: null,
     } as LicenseRecord)
+    verificationMocks.verifySignedLicense.mockResolvedValue({
+      valid: true,
+      claims: { machineId: 'AABBCCDD', status: 'ACTIVE' },
+      expiresAt: expirationDate,
+    })
 
     await useLicenseStore.getState().initialize()
     const state = useLicenseStore.getState()
 
     expect(state.status).toBe('ACTIVE')
-    expect(state.licenseKey).toBe('ABCD-EF01')
+    expect(state.licenseKey).toBe(licenseKey)
     expect(dbMocks.persistLicense).not.toHaveBeenCalled()
   })
 

@@ -40,14 +40,14 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { getStockStatus } from '@/lib/stock-status'
+import { getExpiryStatus } from '@/lib/expiry-alert'
 import { formatMoney } from '@/lib/money'
-import { resolveProductUnit, resolveUnitsPerCarton } from '@/lib/product-unit'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useInventoryStore } from '@/store/useInventoryStore'
 import type { Product, StockStatus } from '@/types/inventory'
 import { ProductFormModal } from './ProductFormModal'
-import { StockInModal } from './StockInModal'
+import { ShipmentReceivingModal } from './ShipmentReceivingModal'
 import { stockStatusStyles } from './stock-status-config'
 
 type StockFilter = StockStatus | 'ALL' | 'LOW_AND_OUT'
@@ -83,6 +83,7 @@ function sortProducts(products: Product[], sort: SortState | null): Product[] {
 export function InventoryTable() {
   const { t } = useTranslation()
   const products = useInventoryStore(state => state.products)
+  const productBatches = useInventoryStore(state => state.productBatches)
   const deleteProduct = useInventoryStore(state => state.deleteProduct)
   const role = useAuthStore(state => state.currentUser?.role)
   const isAdmin = role === 'ADMIN'
@@ -122,6 +123,18 @@ export function InventoryTable() {
   })
 
   const sortedProducts = sortProducts(filteredProducts, sort)
+  const expiringBatches = productBatches.filter(
+    batch =>
+      batch.expiryDate != null &&
+      batch.quantity > 0 &&
+      getExpiryStatus(batch.expiryDate) !== 'OK'
+  )
+  const expiringProductCount = new Set(
+    expiringBatches.map(batch => batch.productId)
+  ).size
+  const expiredBatchCount = expiringBatches.filter(
+    batch => getExpiryStatus(batch.expiryDate) === 'EXPIRED'
+  ).length
 
   const toggleSort = (key: SortKey) => {
     setSort(current =>
@@ -227,10 +240,35 @@ export function InventoryTable() {
       </CardHeader>
 
       <CardContent className="space-y-4">
+        {expiringBatches.length > 0 && (
+          <div
+            role="status"
+            className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2"
+          >
+            <div>
+              <p className="text-sm font-medium">
+                {t('inventory.expiry.alertTitle')}
+              </p>
+              <p className="text-muted-foreground text-xs">
+                {t('inventory.expiry.alertSummary', {
+                  products: expiringProductCount,
+                  batches: expiringBatches.length,
+                })}
+              </p>
+            </div>
+            {expiredBatchCount > 0 && (
+              <Badge variant="destructive">
+                {t('inventory.expiry.expiredCount', {
+                  count: expiredBatchCount,
+                })}
+              </Badge>
+            )}
+          </div>
+        )}
         {/* Toolbar: search + category + status filters */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="relative w-full sm:flex-1">
-            <Search className="text-muted-foreground pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2" />
+            <Search className="text-muted-foreground pointer-events-none absolute inset-s-3 top-1/2 size-4 -translate-y-1/2" />
             <Input
               type="search"
               value={search}
@@ -330,8 +368,18 @@ export function InventoryTable() {
                 )
                 const statusStyle = stockStatusStyles[status]
                 const StatusIcon = statusStyle.icon
-                const cartonBoxes = resolveUnitsPerCarton(product)
-
+                const productExpiryBatches = productBatches.filter(
+                  batch =>
+                    batch.productId === product.id &&
+                    batch.expiryDate != null &&
+                    batch.quantity > 0
+                )
+                const hasExpiredBatch = productExpiryBatches.some(
+                  batch => getExpiryStatus(batch.expiryDate) === 'EXPIRED'
+                )
+                const hasExpiringBatch = productExpiryBatches.some(
+                  batch => getExpiryStatus(batch.expiryDate) === 'EXPIRING_SOON'
+                )
                 return (
                   <TableRow
                     key={product.id}
@@ -349,22 +397,23 @@ export function InventoryTable() {
                       )}
                     </TableCell>
                     <TableCell className="font-medium">
-                      {product.name}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span>{product.name}</span>
+                        {hasExpiredBatch && (
+                          <Badge variant="destructive" className="text-[10px]">
+                            {t('inventory.expiry.expired')}
+                          </Badge>
+                        )}
+                        {!hasExpiredBatch && hasExpiringBatch && (
+                          <Badge className="border-amber-600/30 bg-amber-500/10 text-amber-700 dark:text-amber-300 text-[10px]">
+                            {t('inventory.expiry.expiringSoon')}
+                          </Badge>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="text-end font-semibold tabular-nums">
-                      {product.quantity}
-                      <span className="text-muted-foreground ms-1 text-xs font-normal">
-                        {resolveProductUnit(product.unit)}
-                      </span>
-                      {cartonBoxes !== undefined && (
-                        <span className="text-muted-foreground ms-1 text-xs font-normal">
-                          (
-                          {t('inventory.unit.boxesCount', {
-                            count: cartonBoxes,
-                          })}
-                          )
-                        </span>
-                      )}
+                      {product.cartonQuantity} {t('inventory.unit.carton')} +{' '}
+                      {product.boxQuantity} {t('inventory.unit.box')}
                     </TableCell>
                     <TableCell className="text-end tabular-nums">
                       {product.minThreshold}
@@ -464,7 +513,7 @@ export function InventoryTable() {
         />
 
         {/* Add stock (stock-in / purchase invoice): admin-only. */}
-        <StockInModal
+        <ShipmentReceivingModal
           open={stockInOpen}
           onOpenChange={open => {
             setStockInOpen(open)

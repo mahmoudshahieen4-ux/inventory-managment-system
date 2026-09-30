@@ -22,7 +22,10 @@ const sampleProduct: NewProduct = {
 describe('InventoryStore', () => {
   beforeEach(() => {
     // Reset store state before each test
-    useInventoryStore.setState({ products: [...initialProducts] })
+    useInventoryStore.setState({
+      products: [...initialProducts],
+      productBatches: [],
+    })
   })
 
   it('is seeded with products covering every stock status', () => {
@@ -142,5 +145,95 @@ describe('InventoryStore', () => {
     useInventoryStore.getState().addStock('not-a-real-id', 99)
 
     expect(useInventoryStore.getState().products).toEqual(before)
+  })
+
+  it('plans box deductions by unpacking cartons only when needed', () => {
+    const target = {
+      ...findProduct('prod-002'),
+      cartonQuantity: 2,
+      boxQuantity: 2,
+      boxesPerCarton: 12,
+    }
+    useInventoryStore.setState({ products: [target] })
+
+    expect(
+      useInventoryStore.getState().deductBoxStock(target.id, 13)
+    ).toMatchObject({
+      productId: target.id,
+      cartonQuantity: 1,
+      boxQuantity: 1,
+      newQuantity: 13,
+    })
+    expect(useInventoryStore.getState().products[0]).toEqual(target)
+    expect(
+      useInventoryStore.getState().deductBoxStock(target.id, 27)
+    ).toBeNull()
+  })
+
+  it('adds multiple carton and box shipment lines to local inventory', async () => {
+    const target = {
+      ...findProduct('prod-002'),
+      cartonQuantity: 1,
+      boxQuantity: 2,
+    }
+    useInventoryStore.setState({ products: [target] })
+
+    await useInventoryStore.getState().addShipment([
+      { productId: target.id, unit: 'carton', quantity: 2, purchasePrice: 18 },
+      {
+        productId: target.id,
+        unit: 'box',
+        quantity: 3,
+        purchasePrice: 1.8,
+        batchNumber: 'LOT-7',
+        expiryDate: '2027-06-30',
+      },
+    ])
+
+    expect(useInventoryStore.getState().products[0]).toMatchObject({
+      cartonQuantity: 3,
+      boxQuantity: 5,
+      quantity: 41,
+      cartonPurchasePrice: 18,
+      boxPurchasePrice: 1.8,
+    })
+    expect(useInventoryStore.getState().productBatches).toMatchObject([
+      {
+        productId: target.id,
+        batchNumber: 'LOT-7',
+        quantity: 3,
+        expiryDate: '2027-06-30',
+      },
+    ])
+  })
+
+  it('plans carton sales against carton counts and dated batches', () => {
+    const target = {
+      ...findProduct('prod-002'),
+      cartonQuantity: 2,
+      boxQuantity: 3,
+      boxesPerCarton: 12,
+    }
+    useInventoryStore.setState({
+      products: [target],
+      productBatches: [
+        {
+          id: 'expiry-batch',
+          productId: target.id,
+          quantity: 15,
+          expiryDate: '2027-01-01',
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    })
+
+    expect(
+      useInventoryStore.getState().deductStock(target.id, 1, 'carton')
+    ).toMatchObject({
+      cartonQuantity: 1,
+      boxQuantity: 3,
+      newQuantity: 15,
+      batchDeductions: [{ batchId: 'expiry-batch', quantity: 12 }],
+    })
   })
 })

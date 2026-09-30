@@ -15,8 +15,9 @@ import i18n from '@/i18n/config'
 import { useUIStore } from '@/store/ui-store'
 import { logger } from '@/lib/logger'
 import { notifications } from '@/lib/notifications'
+import { SUPPORT_INFO } from '@/constants/support'
 
-const APP_NAME = 'Tauri Template'
+const APP_NAME = SUPPORT_INFO.storeName
 
 /**
  * Build and set the application menu with translated labels.

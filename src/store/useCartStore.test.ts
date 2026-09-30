@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import type { Product } from '@/types/inventory'
+import { useInventoryStore } from '@/store/useInventoryStore'
 import {
   roundMoney,
   selectCartSubtotal,
@@ -19,6 +20,13 @@ const product: Product = {
   purchasePrice: 0.8,
   sellingPrice: 2.49,
   category: 'Snacks',
+  cartonQuantity: 0,
+  boxQuantity: 3,
+  boxesPerCarton: 12,
+  cartonSellingPrice: 29.88,
+  boxSellingPrice: 2.49,
+  cartonPurchasePrice: 9.6,
+  boxPurchasePrice: 0.8,
 }
 
 const outOfStockProduct: Product = {
@@ -26,11 +34,13 @@ const outOfStockProduct: Product = {
   id: 'prod-2',
   sku: 'COF-001',
   quantity: 0,
+  boxQuantity: 0,
 }
 
 describe('useCartStore', () => {
   beforeEach(() => {
     useCartStore.setState({ items: [] })
+    useInventoryStore.setState({ products: [product] })
   })
 
   it('adds a product as a new cart line', () => {
@@ -44,6 +54,7 @@ describe('useCartStore', () => {
         purchasePrice: 0.8,
         unitPrice: 2.49,
         quantity: 1,
+        unit: 'box',
       },
     ])
   })
@@ -61,6 +72,26 @@ describe('useCartStore', () => {
     for (let i = 0; i < 5; i++) addToCart(product)
 
     expect(useCartStore.getState().items.at(0)?.quantity).toBe(3)
+  })
+
+  it('defaults to boxes and changes price when switched to cartons', () => {
+    const stockedProduct = {
+      ...product,
+      cartonQuantity: 2,
+      cartonSellingPrice: 25,
+      cartonPurchasePrice: 10,
+    }
+    useInventoryStore.setState({ products: [stockedProduct] })
+    useCartStore.getState().addToCart(stockedProduct)
+    expect(useCartStore.getState().items[0]?.unit).toBe('box')
+
+    useCartStore.getState().setSaleUnit(product.id, 'carton')
+
+    expect(useCartStore.getState().items[0]).toMatchObject({
+      unit: 'carton',
+      unitPrice: 25,
+      purchasePrice: 10,
+    })
   })
 
   it('ignores out-of-stock products', () => {

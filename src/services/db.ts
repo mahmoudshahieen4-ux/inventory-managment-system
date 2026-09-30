@@ -14,7 +14,7 @@ import {
 } from '@/lib/product-unit'
 import { cutoffForRange } from '@/lib/sales-time-range'
 import type { AuthAccount } from '@/types/auth'
-import type { Product, StockTransaction } from '@/types/inventory'
+import type { Product, ProductBatch, StockTransaction } from '@/types/inventory'
 import type {
   AdvanceRecord,
   AttendanceRecord,
@@ -22,7 +22,7 @@ import type {
   SalaryPaymentRecord,
   Worker,
 } from '@/types/payroll'
-import type { CreditNote, Sale, SaleItem } from '@/types/sales'
+import type { CartItem, CreditNote, Sale, SaleItem } from '@/types/sales'
 import type {
   AnalyticsData,
   AnalyticsSummary,
@@ -144,6 +144,21 @@ function loadDb(): Promise<Database> {
           updated_at TEXT NOT NULL
         )
       `)
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS product_batches (
+          id TEXT PRIMARY KEY,
+          product_id TEXT NOT NULL,
+          batch_number TEXT,
+          quantity INTEGER NOT NULL DEFAULT 0,
+          purchase_price REAL,
+          expiry_date TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+          FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+        )
+      `)
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_product_batches_product_expiry ON product_batches(product_id, expiry_date, created_at)'
+      )
       // Stock movement audit log — records every "stock in" (purchase invoice /
       // shipment received) so inventory changes are traceable. Sale-driven
       // decrements are logged inside persistSaleAtomic on the same transaction.
@@ -176,6 +191,21 @@ function loadDb(): Promise<Database> {
           created_at TEXT NOT NULL
         )
       `)
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS held_invoices (
+          id TEXT PRIMARY KEY,
+          customer_name TEXT,
+          notes TEXT,
+          items_json TEXT NOT NULL,
+          subtotal REAL NOT NULL,
+          total_amount REAL NOT NULL,
+          cashier_id TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+        )
+      `)
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_held_invoices_created_at ON held_invoices(created_at)'
+      )
       await db.execute(`
         CREATE TABLE IF NOT EXISTS sale_items (
           id TEXT PRIMARY KEY,
@@ -347,6 +377,85 @@ function loadDb(): Promise<Database> {
         .catch(() => {
           // Column already exists — nothing to do.
         })
+      for (const [column, definition] of [
+        ['carton_quantity', 'INTEGER NOT NULL DEFAULT 0'],
+        ['box_quantity', 'INTEGER NOT NULL DEFAULT 0'],
+        ['boxes_per_carton', 'INTEGER NOT NULL DEFAULT 1'],
+        ['carton_selling_price', 'REAL NOT NULL DEFAULT 0'],
+        ['box_selling_price', 'REAL NOT NULL DEFAULT 0'],
+        ['carton_purchase_price', 'REAL NOT NULL DEFAULT 0'],
+        ['box_purchase_price', 'REAL NOT NULL DEFAULT 0'],
+      ]) {
+        await db
+          .execute(`ALTER TABLE products ADD COLUMN ${column} ${definition}`)
+          .catch(() => {
+            // Column already exists.
+          })
+      }
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+          id TEXT PRIMARY KEY,
+          applied_at TEXT NOT NULL
+        )
+      `)
+      await db.execute(`
+          UPDATE products
+          SET boxes_per_carton = CASE
+                WHEN units_per_carton IS NOT NULL AND units_per_carton > 0 THEN units_per_carton
+                ELSE 12
+              END,
+              carton_quantity = CASE WHEN unit = 'كرتونة' THEN quantity ELSE 0 END,
+              box_quantity = CASE WHEN unit = 'كرتونة' THEN 0 ELSE quantity END,
+              quantity = CASE
+                WHEN unit = 'كرتونة' THEN quantity * CASE
+                  WHEN units_per_carton IS NOT NULL AND units_per_carton > 0 THEN units_per_carton
+                  ELSE 12
+                END
+                ELSE quantity
+              END,
+              min_threshold = CASE
+                WHEN unit = 'كرتونة' THEN min_threshold * CASE
+                  WHEN units_per_carton IS NOT NULL AND units_per_carton > 0 THEN units_per_carton
+                  ELSE 12
+                END
+                ELSE min_threshold
+              END,
+              carton_selling_price = CASE
+                WHEN unit = 'كرتونة' THEN selling_price
+                ELSE selling_price * CASE
+                  WHEN units_per_carton IS NOT NULL AND units_per_carton > 0 THEN units_per_carton
+                  ELSE 12
+                END
+              END,
+              box_selling_price = CASE
+                WHEN unit = 'كرتونة' THEN selling_price / CASE
+                  WHEN units_per_carton IS NOT NULL AND units_per_carton > 0 THEN units_per_carton
+                  ELSE 12
+                END
+                ELSE selling_price
+              END,
+              carton_purchase_price = CASE
+                WHEN unit = 'كرتونة' THEN purchase_price
+                ELSE purchase_price * CASE
+                  WHEN units_per_carton IS NOT NULL AND units_per_carton > 0 THEN units_per_carton
+                  ELSE 12
+                END
+              END,
+              box_purchase_price = CASE
+                WHEN unit = 'كرتونة' THEN purchase_price / CASE
+                  WHEN units_per_carton IS NOT NULL AND units_per_carton > 0 THEN units_per_carton
+                  ELSE 12
+                END
+                ELSE purchase_price
+              END
+          WHERE NOT EXISTS (
+            SELECT 1 FROM schema_migrations WHERE id = 'dual_unit_inventory_v1'
+          )
+        `)
+      await db.execute(
+        'INSERT OR IGNORE INTO schema_migrations (id, applied_at) VALUES ($1, $2)',
+        ['dual_unit_inventory_v1', new Date().toISOString()]
+      )
       // Unit management was simplified: products without an explicit unit are
       // counted in pieces, so legacy NULL/blank rows are backfilled once instead
       // of rendering an "unspecified" unit in the UI.
@@ -384,6 +493,13 @@ function loadDb(): Promise<Database> {
         )
         .catch(() => {
           // Column already exists — nothing to do.
+        })
+      await db
+        .execute(
+          "ALTER TABLE sale_items ADD COLUMN unit TEXT NOT NULL DEFAULT 'box'"
+        )
+        .catch(() => {
+          // Column already exists.
         })
       // Migration: add sku column to sale_items (added to track item SKU on receipts).
       await db
@@ -464,6 +580,13 @@ interface ProductRow {
   category: string
   unit: string | null
   units_per_carton: number | null
+  carton_quantity: number
+  box_quantity: number
+  boxes_per_carton: number
+  carton_selling_price: number
+  box_selling_price: number
+  carton_purchase_price: number
+  box_purchase_price: number
   updated_at: string
 }
 
@@ -485,6 +608,13 @@ function toProduct(row: ProductRow): Product {
       unit: row.unit ?? undefined,
       unitsPerCarton: row.units_per_carton ?? undefined,
     }),
+    cartonQuantity: Number(row.carton_quantity) || 0,
+    boxQuantity: Number(row.box_quantity) || 0,
+    boxesPerCarton: Math.max(1, Number(row.boxes_per_carton) || 1),
+    cartonSellingPrice: Number(row.carton_selling_price) || 0,
+    boxSellingPrice: Number(row.box_selling_price),
+    cartonPurchasePrice: Number(row.carton_purchase_price) || 0,
+    boxPurchasePrice: Number(row.box_purchase_price),
   }
 }
 
@@ -495,7 +625,7 @@ function toProduct(row: ProductRow): Product {
 export async function fetchProducts(): Promise<Product[]> {
   const db = await getDb()
   const rows = await db.select<ProductRow[]>(
-    'SELECT id, name, sku, barcode, quantity, min_threshold, purchase_price, selling_price, category, unit, units_per_carton, updated_at FROM products ORDER BY name'
+    'SELECT id, name, sku, barcode, quantity, min_threshold, purchase_price, selling_price, category, unit, units_per_carton, carton_quantity, box_quantity, boxes_per_carton, carton_selling_price, box_selling_price, carton_purchase_price, box_purchase_price, updated_at FROM products ORDER BY name'
   )
   return rows.map(toProduct)
 }
@@ -511,7 +641,9 @@ export async function findProductByBarcode(
   const db = await getDb()
   const rows = await db.select<ProductRow[]>(
     `SELECT id, name, sku, barcode, quantity, min_threshold, purchase_price,
-            selling_price, category, unit, units_per_carton, updated_at
+          selling_price, category, unit, units_per_carton, carton_quantity,
+          box_quantity, boxes_per_carton, carton_selling_price, box_selling_price,
+          carton_purchase_price, box_purchase_price, updated_at
      FROM products
      WHERE barcode = $1 OR sku = $1
      LIMIT 1`,
@@ -524,7 +656,7 @@ export async function findProductByBarcode(
 export async function insertProduct(product: Product): Promise<void> {
   const db = await getDb()
   await db.execute(
-    'INSERT INTO products (id, name, sku, quantity, min_threshold, purchase_price, selling_price, category, unit, units_per_carton, barcode, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)',
+    'INSERT INTO products (id, name, sku, quantity, min_threshold, purchase_price, selling_price, category, unit, units_per_carton, barcode, carton_quantity, box_quantity, boxes_per_carton, carton_selling_price, box_selling_price, carton_purchase_price, box_purchase_price, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)',
     [
       product.id,
       product.name,
@@ -537,6 +669,13 @@ export async function insertProduct(product: Product): Promise<void> {
       resolveProductUnit(product.unit),
       resolveUnitsPerCarton(product) ?? null,
       product.barcode ?? null,
+      product.cartonQuantity,
+      product.boxQuantity,
+      product.boxesPerCarton,
+      product.cartonSellingPrice,
+      product.boxSellingPrice,
+      product.cartonPurchasePrice,
+      product.boxPurchasePrice,
       new Date().toISOString(),
     ]
   )
@@ -545,7 +684,7 @@ export async function insertProduct(product: Product): Promise<void> {
 export async function updateProductRow(product: Product): Promise<void> {
   const db = await getDb()
   await db.execute(
-    'UPDATE products SET name = $1, sku = $2, quantity = $3, min_threshold = $4, purchase_price = $5, selling_price = $6, category = $7, unit = $8, units_per_carton = $9, barcode = $10, updated_at = $11 WHERE id = $12',
+    'UPDATE products SET name = $1, sku = $2, quantity = $3, min_threshold = $4, purchase_price = $5, selling_price = $6, category = $7, unit = $8, units_per_carton = $9, barcode = $10, carton_quantity = $11, box_quantity = $12, boxes_per_carton = $13, carton_selling_price = $14, box_selling_price = $15, carton_purchase_price = $16, box_purchase_price = $17, updated_at = $18 WHERE id = $19',
     [
       product.name,
       product.sku,
@@ -557,6 +696,13 @@ export async function updateProductRow(product: Product): Promise<void> {
       resolveProductUnit(product.unit),
       resolveUnitsPerCarton(product) ?? null,
       product.barcode ?? null,
+      product.cartonQuantity,
+      product.boxQuantity,
+      product.boxesPerCarton,
+      product.cartonSellingPrice,
+      product.boxSellingPrice,
+      product.cartonPurchasePrice,
+      product.boxPurchasePrice,
       new Date().toISOString(),
       product.id,
     ]
@@ -602,7 +748,7 @@ export async function addStockToProduct(
     const previousQuantity = Number(currentRow?.quantity) || 0
     const newQuantity = previousQuantity + addedQuantity
     await db.execute(
-      'UPDATE products SET quantity = quantity + $1, purchase_price = COALESCE($2, purchase_price), updated_at = $3 WHERE id = $4',
+      'UPDATE products SET quantity = quantity + $1, box_quantity = box_quantity + $1, purchase_price = COALESCE($2, purchase_price), box_purchase_price = COALESCE($2, box_purchase_price), updated_at = $3 WHERE id = $4',
       [addedQuantity, costPrice ?? null, now, productId]
     )
     await db.execute(
@@ -620,6 +766,131 @@ export async function addStockToProduct(
       ]
     )
   })
+}
+
+export interface ShipmentLineInput {
+  productId: string
+  unit: 'carton' | 'box'
+  quantity: number
+  purchasePrice?: number
+  batchNumber?: string
+  expiryDate?: string
+}
+
+export interface BatchDeduction {
+  batchId: string
+  quantity: number
+}
+
+/** Applies every shipment line and its audit entry in one SQLite transaction. */
+export async function addShipmentToInventory(
+  lines: ShipmentLineInput[],
+  userId = 'admin'
+): Promise<Product[]> {
+  if (lines.length === 0) return fetchProducts()
+  const now = new Date().toISOString()
+  await withTransaction(async db => {
+    for (const line of lines) {
+      if (
+        !Number.isInteger(line.quantity) ||
+        line.quantity <= 0 ||
+        (line.purchasePrice !== undefined &&
+          (!Number.isFinite(line.purchasePrice) || line.purchasePrice < 0))
+      ) {
+        throw new Error('pos-stock: invalid shipment line')
+      }
+      if (
+        line.expiryDate !== undefined &&
+        (!/^\d{4}-\d{2}-\d{2}$/.test(line.expiryDate) ||
+          Number.isNaN(Date.parse(`${line.expiryDate}T00:00:00Z`)) ||
+          new Date(`${line.expiryDate}T00:00:00Z`)
+            .toISOString()
+            .slice(0, 10) !== line.expiryDate)
+      ) {
+        throw new Error('pos-stock: invalid expiry date')
+      }
+      const rows = await db.select<
+        {
+          carton_quantity: number
+          box_quantity: number
+          boxes_per_carton: number
+        }[]
+      >(
+        'SELECT carton_quantity, box_quantity, boxes_per_carton FROM products WHERE id = $1',
+        [line.productId]
+      )
+      const current = rows[0]
+      if (!current) {
+        throw new Error(`pos-stock: product not found (${line.productId})`)
+      }
+      const boxesPerCarton = Math.max(1, Number(current.boxes_per_carton) || 1)
+      const currentBoxes =
+        Number(current.carton_quantity) * boxesPerCarton +
+        Number(current.box_quantity)
+      const addedBoxes =
+        line.quantity * (line.unit === 'carton' ? boxesPerCarton : 1)
+      const newBoxes = currentBoxes + addedBoxes
+      const cartonDelta = line.unit === 'carton' ? line.quantity : 0
+      const boxDelta = line.unit === 'box' ? line.quantity : 0
+      const pricePerBox =
+        line.purchasePrice === undefined
+          ? null
+          : line.unit === 'carton'
+            ? line.purchasePrice / boxesPerCarton
+            : line.purchasePrice
+
+      await db.execute(
+        `UPDATE products
+         SET carton_quantity = carton_quantity + $1,
+             box_quantity = box_quantity + $2,
+             quantity = $3,
+             purchase_price = COALESCE($4, purchase_price),
+             carton_purchase_price = CASE WHEN $5 IS NULL THEN carton_purchase_price ELSE $5 END,
+             box_purchase_price = CASE WHEN $6 IS NULL THEN box_purchase_price ELSE $6 END,
+             updated_at = $7
+         WHERE id = $8`,
+        [
+          cartonDelta,
+          boxDelta,
+          newBoxes,
+          pricePerBox,
+          line.unit === 'carton' ? (line.purchasePrice ?? null) : null,
+          line.unit === 'box' ? (line.purchasePrice ?? null) : null,
+          now,
+          line.productId,
+        ]
+      )
+      if (line.expiryDate) {
+        await db.execute(
+          'INSERT INTO product_batches (id, product_id, batch_number, quantity, purchase_price, expiry_date, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+          [
+            crypto.randomUUID(),
+            line.productId,
+            line.batchNumber?.trim() || null,
+            addedBoxes,
+            pricePerBox,
+            line.expiryDate,
+            now,
+          ]
+        )
+      }
+      await db.execute(
+        'INSERT INTO stock_transactions (id, product_id, type, quantity, previous_quantity, new_quantity, cost_price, user_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+        [
+          crypto.randomUUID(),
+          line.productId,
+          'IN',
+          addedBoxes,
+          currentBoxes,
+          newBoxes,
+          line.purchasePrice ?? null,
+          userId,
+          now,
+        ]
+      )
+    }
+  })
+  return fetchProducts()
 }
 
 /**
@@ -640,6 +911,40 @@ export async function fetchStockTransactions(
         'SELECT id, product_id, type, quantity, previous_quantity, new_quantity, cost_price, user_id, created_at FROM stock_transactions ORDER BY created_at DESC'
       )
   return rows.map(toStockTransaction)
+}
+
+interface ProductBatchRow {
+  id: string
+  product_id: string
+  batch_number: string | null
+  quantity: number
+  purchase_price: number | null
+  expiry_date: string | null
+  created_at: string
+}
+
+/** Fetches only dated batches; standard non-expiring inventory is excluded. */
+export async function fetchExpiringProductBatches(
+  productId?: string
+): Promise<ProductBatch[]> {
+  const db = await getDb()
+  const rows = productId
+    ? await db.select<ProductBatchRow[]>(
+        'SELECT id, product_id, batch_number, quantity, purchase_price, expiry_date, created_at FROM product_batches WHERE expiry_date IS NOT NULL AND quantity > 0 AND product_id = $1 ORDER BY expiry_date, created_at',
+        [productId]
+      )
+    : await db.select<ProductBatchRow[]>(
+        'SELECT id, product_id, batch_number, quantity, purchase_price, expiry_date, created_at FROM product_batches WHERE expiry_date IS NOT NULL AND quantity > 0 ORDER BY expiry_date, created_at'
+      )
+  return rows.map(row => ({
+    id: row.id,
+    productId: row.product_id,
+    batchNumber: row.batch_number ?? undefined,
+    quantity: row.quantity,
+    purchasePrice: row.purchase_price ?? undefined,
+    expiryDate: row.expiry_date,
+    createdAt: row.created_at,
+  }))
 }
 
 /* ------------------------------------------------------------------ */
@@ -664,6 +969,7 @@ interface SaleItemRow {
   product_name: string
   sku: string
   quantity: number
+  unit: 'box' | 'carton'
   purchase_price: number
   unit_price: number
   total_price: number
@@ -750,6 +1056,74 @@ export async function persistSale(sale: Sale): Promise<void> {
 export interface StockUpdate {
   productId: string
   newQuantity: number
+  cartonQuantity?: number
+  boxQuantity?: number
+  batchDeductions?: BatchDeduction[]
+}
+
+export interface HeldInvoice {
+  id: string
+  customerName?: string
+  notes?: string
+  items: CartItem[]
+  subtotal: number
+  totalAmount: number
+  createdAt: string
+  cashierId?: string
+}
+
+interface HeldInvoiceRow {
+  id: string
+  customer_name: string | null
+  notes: string | null
+  items_json: string
+  subtotal: number
+  total_amount: number
+  cashier_id: string | null
+  created_at: string
+}
+
+function toHeldInvoice(row: HeldInvoiceRow): HeldInvoice {
+  return {
+    id: row.id,
+    customerName: row.customer_name ?? undefined,
+    notes: row.notes ?? undefined,
+    items: JSON.parse(row.items_json) as CartItem[],
+    subtotal: row.subtotal,
+    totalAmount: row.total_amount,
+    createdAt: row.created_at,
+    cashierId: row.cashier_id ?? undefined,
+  }
+}
+
+export async function fetchHeldInvoices(): Promise<HeldInvoice[]> {
+  const db = await getDb()
+  const rows = await db.select<HeldInvoiceRow[]>(
+    'SELECT id, customer_name, notes, items_json, subtotal, total_amount, cashier_id, created_at FROM held_invoices ORDER BY created_at DESC'
+  )
+  return rows.map(toHeldInvoice)
+}
+
+export async function insertHeldInvoice(invoice: HeldInvoice): Promise<void> {
+  const db = await getDb()
+  await db.execute(
+    'INSERT INTO held_invoices (id, customer_name, notes, items_json, subtotal, total_amount, cashier_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+    [
+      invoice.id,
+      invoice.customerName ?? null,
+      invoice.notes ?? null,
+      JSON.stringify(invoice.items),
+      invoice.subtotal,
+      invoice.totalAmount,
+      invoice.cashierId ?? null,
+      invoice.createdAt,
+    ]
+  )
+}
+
+export async function deleteHeldInvoiceRow(id: string): Promise<void> {
+  const db = await getDb()
+  await db.execute('DELETE FROM held_invoices WHERE id = $1', [id])
 }
 
 /* ------------------------------------------------------------------ */
@@ -798,7 +1172,8 @@ const committedSaleIds = new Set<string>()
  */
 export async function persistSaleAtomic(
   sale: Sale,
-  stockUpdates: StockUpdate[]
+  stockUpdates: StockUpdate[],
+  heldInvoiceId?: string
 ): Promise<void> {
   if (committedSaleIds.has(sale.id)) {
     logger.warn('Ignoring a duplicate submission for the same invoice', {
@@ -827,7 +1202,7 @@ export async function persistSaleAtomic(
       )
       for (const item of sale.items) {
         await db.execute(
-          'INSERT INTO sale_items (id, sale_id, product_id, product_name, sku, quantity, purchase_price, unit_price, total_price, profit) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
+          'INSERT INTO sale_items (id, sale_id, product_id, product_name, sku, quantity, purchase_price, unit_price, total_price, profit, unit) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
           [
             crypto.randomUUID(),
             sale.id,
@@ -839,13 +1214,64 @@ export async function persistSaleAtomic(
             item.unitPrice,
             item.lineTotal,
             item.profit ?? 0,
+            item.unit ?? 'box',
           ]
         )
       }
       for (const update of stockUpdates) {
-        await db.execute('UPDATE products SET quantity = $1 WHERE id = $2', [
-          update.newQuantity,
-          update.productId,
+        const currentRows = await db.select<{ quantity: number }[]>(
+          'SELECT quantity FROM products WHERE id = $1',
+          [update.productId]
+        )
+        const currentQuantity = Number(currentRows[0]?.quantity) || 0
+        let expiringQuantity = Math.max(0, currentQuantity - update.newQuantity)
+        if (
+          update.cartonQuantity !== undefined &&
+          update.boxQuantity !== undefined
+        ) {
+          await db.execute(
+            'UPDATE products SET quantity = $1, carton_quantity = $2, box_quantity = $3 WHERE id = $4',
+            [
+              update.newQuantity,
+              update.cartonQuantity,
+              update.boxQuantity,
+              update.productId,
+            ]
+          )
+        } else {
+          await db.execute('UPDATE products SET quantity = $1 WHERE id = $2', [
+            update.newQuantity,
+            update.productId,
+          ])
+        }
+        if (expiringQuantity > 0) {
+          const batches = await db.select<
+            {
+              id: string
+              quantity: number
+            }[]
+          >(
+            'SELECT id, quantity FROM product_batches WHERE product_id = $1 AND expiry_date IS NOT NULL AND quantity > 0 ORDER BY expiry_date ASC, created_at ASC',
+            [update.productId]
+          )
+          for (const batch of batches) {
+            if (expiringQuantity <= 0) break
+            const quantity = Math.min(
+              Number(batch.quantity) || 0,
+              expiringQuantity
+            )
+            if (quantity <= 0) continue
+            await db.execute(
+              'UPDATE product_batches SET quantity = quantity - $1 WHERE id = $2',
+              [quantity, batch.id]
+            )
+            expiringQuantity -= quantity
+          }
+        }
+      }
+      if (heldInvoiceId) {
+        await db.execute('DELETE FROM held_invoices WHERE id = $1', [
+          heldInvoiceId,
         ])
       }
     })
@@ -869,7 +1295,7 @@ export async function fetchSales(range?: TimeRange): Promise<Sale[]> {
   // of rows when the DB has years of history.
   const saleIds = saleRows.map(r => `'${r.id}'`).join(',')
   const itemRows = await db.select<SaleItemRow[]>(
-    `SELECT id, sale_id, product_id, product_name, sku, quantity, purchase_price, unit_price, total_price, profit FROM sale_items WHERE sale_id IN (${saleIds})`
+    `SELECT id, sale_id, product_id, product_name, sku, quantity, purchase_price, unit_price, total_price, profit, unit FROM sale_items WHERE sale_id IN (${saleIds})`
   )
 
   const itemsBySale = new Map<string, SaleItem[]>()
@@ -882,6 +1308,7 @@ export async function fetchSales(range?: TimeRange): Promise<Sale[]> {
       purchasePrice: row.purchase_price,
       unitPrice: row.unit_price,
       quantity: row.quantity,
+      unit: row.unit === 'carton' ? 'carton' : 'box',
       lineTotal: row.total_price,
       profit: row.profit,
     })

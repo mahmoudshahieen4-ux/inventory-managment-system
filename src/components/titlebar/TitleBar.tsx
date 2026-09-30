@@ -1,5 +1,5 @@
-import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
+import { SUPPORT_INFO } from '@/constants/support'
 import { usePlatform, type AppPlatform } from '@/hooks/use-platform'
 import { MacOSWindowControls } from './MacOSWindowControls'
 import { WindowsWindowControls } from './WindowsWindowControls'
@@ -31,8 +31,7 @@ interface TitleBarProps {
  * Use `forcePlatform` prop in development to test other platform layouts.
  */
 export function TitleBar({ className, title, forcePlatform }: TitleBarProps) {
-  const { t } = useTranslation()
-  const displayTitle = title ?? t('titlebar.default')
+  const displayTitle = title ?? SUPPORT_INFO.storeName
   const detectedPlatform = usePlatform()
 
   // In development, allow forcing a platform for testing

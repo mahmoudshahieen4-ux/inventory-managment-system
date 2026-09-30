@@ -71,7 +71,9 @@ describe('CartSummary · checkout button', () => {
     render(<CartSummary onCheckoutComplete={onCheckoutComplete} />)
 
     await user.click(
-      screen.getByRole('button', { name: i18n.t('pos.cart.checkout') })
+      screen.getByRole('button', {
+        name: new RegExp(i18n.t('pos.cart.checkout')),
+      })
     )
 
     // Loading state: the same button is now disabled and shows the spinner label.
@@ -103,7 +105,9 @@ describe('CartSummary · checkout button', () => {
     render(<CartSummary onCheckoutComplete={onCheckoutComplete} />)
 
     await user.click(
-      screen.getByRole('button', { name: i18n.t('pos.cart.checkout') })
+      screen.getByRole('button', {
+        name: new RegExp(i18n.t('pos.cart.checkout')),
+      })
     )
 
     await waitFor(() => expect(toastError).toHaveBeenCalled())
@@ -113,7 +117,9 @@ describe('CartSummary · checkout button', () => {
     expect(useSalesStore.getState().sales).toHaveLength(0)
     expect(useSalesStore.getState().isSubmitting).toBe(false)
     expect(
-      screen.getByRole('button', { name: i18n.t('pos.cart.checkout') })
+      screen.getByRole('button', {
+        name: new RegExp(i18n.t('pos.cart.checkout')),
+      })
     ).toBeEnabled()
   })
 
@@ -124,7 +130,7 @@ describe('CartSummary · checkout button', () => {
     render(<CartSummary onCheckoutComplete={vi.fn()} />)
 
     const checkoutButton = screen.getByRole('button', {
-      name: i18n.t('pos.cart.checkout'),
+      name: new RegExp(i18n.t('pos.cart.checkout')),
     })
     await user.click(checkoutButton)
     await user.click(checkoutButton)

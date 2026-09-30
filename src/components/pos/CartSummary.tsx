@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 
 import { registerPosActions, unregisterPosActions } from './pos-actions'
 import { Button } from '@/components/ui/button'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
   Card,
   CardContent,
@@ -15,6 +16,7 @@ import {
 } from '@/components/ui/card'
 import { useAutoSelectOnFocus } from '@/hooks/use-auto-select-on-focus'
 import { formatMoney } from '@/lib/money'
+import { playErrorBeep, playScanBeep } from '@/lib/barcode'
 import type { StockUpdate } from '@/services/db'
 import { useAuthStore } from '@/store/useAuthStore'
 import {
@@ -27,6 +29,7 @@ import {
 } from '@/store/useCartStore'
 import { useInventoryStore } from '@/store/useInventoryStore'
 import { useSalesStore } from '@/store/useSalesStore'
+import { useHeldInvoicesStore } from '@/store/useHeldInvoicesStore'
 import type { Sale, SaleItem } from '@/types/sales'
 
 /** Tax rate as a whole percentage for display (0.05 → 5). */
@@ -56,6 +59,7 @@ export function CartSummary({ onCheckoutComplete }: CartSummaryProps) {
 
   const handleClearCart = () => {
     useCartStore.getState().clearCart()
+    useHeldInvoicesStore.getState().clearActiveHeldInvoice()
     toast.info(t('pos.toast.cartCleared'))
   }
 
@@ -65,16 +69,21 @@ export function CartSummary({ onCheckoutComplete }: CartSummaryProps) {
     // Guard against a double click or a repeated F2 while a commit is in flight.
     if (useSalesStore.getState().isSubmitting) return
 
-    // 1. Compute the post-sale stock for every line (clamped at zero).
+    // 1. Plan stock changes; box sales unpack cartons when necessary.
     const currentProducts = useInventoryStore.getState().products
     const stockUpdates: StockUpdate[] = []
     for (const item of items) {
       const product = currentProducts.find(entry => entry.id === item.productId)
       if (!product) continue
-      stockUpdates.push({
-        productId: item.productId,
-        newQuantity: Math.max(0, product.quantity - item.quantity),
-      })
+      const deduction = useInventoryStore
+        .getState()
+        .deductStock(item.productId, item.quantity, item.unit ?? 'box')
+      if (!deduction) {
+        playErrorBeep()
+        toast.error(t('pos.cart.stockExceeded', { name: item.name }))
+        return
+      }
+      stockUpdates.push(deduction)
     }
 
     // 2. Record the completed sale — invoice + line items + stock decrements
@@ -99,7 +108,8 @@ export function CartSummary({ onCheckoutComplete }: CartSummaryProps) {
         ),
         cashierId: useAuthStore.getState().currentUser?.username ?? 'guest',
       },
-      stockUpdates
+      stockUpdates,
+      useHeldInvoicesStore.getState().activeHeldInvoiceId ?? undefined
     )
 
     // The store already toasted the failure and left the cart untouched, so
@@ -109,10 +119,12 @@ export function CartSummary({ onCheckoutComplete }: CartSummaryProps) {
     // 3. Mirror the new quantities into the UI state (already persisted
     //    atomically — no per-product writes here).
     useInventoryStore.getState().applyStockDeltas(stockUpdates)
+    useHeldInvoicesStore.getState().completeHeldInvoice()
 
     // 4. Reset the cart for the next sale and hand the receipt to the parent.
     useCartStore.getState().clearCart()
     onCheckoutComplete(sale)
+    playScanBeep({ frequency: 1568, durationMs: 120 })
     toast.success(t('pos.toast.saleSuccess'))
   }
 
@@ -160,9 +172,14 @@ export function CartSummary({ onCheckoutComplete }: CartSummaryProps) {
         ) : (
           <ul className="min-h-0 flex-1 space-y-3 overflow-y-auto">
             {cartItems.map(item => {
-              const stock =
-                products.find(product => product.id === item.productId)
-                  ?.quantity ?? 0
+              const product = products.find(
+                entry => entry.id === item.productId
+              )
+              const stock = product
+                ? item.unit === 'carton'
+                  ? product.cartonQuantity
+                  : product.quantity
+                : 0
 
               return (
                 <li key={item.productId} className="rounded-lg border p-3">
@@ -172,7 +189,8 @@ export function CartSummary({ onCheckoutComplete }: CartSummaryProps) {
                         {item.name}
                       </p>
                       <p className="text-muted-foreground text-xs">
-                        {item.sku} · {formatMoney(item.unitPrice)}
+                        {item.sku} · {t(`inventory.unit.${item.unit}`)} ·{' '}
+                        {formatMoney(item.unitPrice)}
                       </p>
                     </div>
                     <Button
@@ -187,6 +205,31 @@ export function CartSummary({ onCheckoutComplete }: CartSummaryProps) {
                       <Trash2 className="size-4" />
                     </Button>
                   </div>
+                  <ToggleGroup
+                    type="single"
+                    size="sm"
+                    variant="outline"
+                    value={item.unit}
+                    onValueChange={value => {
+                      if (value === 'box' || value === 'carton') {
+                        useCartStore
+                          .getState()
+                          .setSaleUnit(item.productId, value)
+                      }
+                    }}
+                    aria-label={t('pos.cart.saleUnit', { name: item.name })}
+                    className="mt-2 w-fit"
+                  >
+                    <ToggleGroupItem value="box">
+                      {t('inventory.unit.box')}
+                    </ToggleGroupItem>
+                    <ToggleGroupItem
+                      value="carton"
+                      disabled={!product || product.cartonQuantity <= 0}
+                    >
+                      {t('inventory.unit.carton')}
+                    </ToggleGroupItem>
+                  </ToggleGroup>
                   <div className="mt-2 flex items-center justify-between">
                     <div className="flex items-center gap-1">
                       <Button
@@ -269,23 +312,48 @@ export function CartSummary({ onCheckoutComplete }: CartSummaryProps) {
           <div className="flex gap-2 pt-1">
             <Button
               variant="outline"
-              className="flex-1"
+              className="flex-1 min-h-12"
               disabled={cartItems.length === 0 || isSubmitting}
               onClick={handleClearCart}
             >
-              {t('pos.cart.clearCart')}
+              <span className="flex items-center gap-1.5">
+                {t('pos.cart.clearCart')}
+                <kbd
+                  aria-hidden="true"
+                  className="rounded border px-1 font-mono text-[10px]"
+                >
+                  F4
+                </kbd>
+              </span>
             </Button>
             <Button
-              className="flex-[2]"
+              className="flex-2 min-h-14 flex-col gap-0.5 py-2 text-base font-bold shadow-sm transition-all duration-150"
               disabled={cartItems.length === 0 || isSubmitting}
               onClick={handleCheckout}
+              aria-label={
+                isSubmitting
+                  ? t('pos.cart.processing')
+                  : `${t('pos.cart.checkout')}, ${t('pos.cart.total')}: ${formatMoney(total)}`
+              }
             >
-              {isSubmitting ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <ShoppingCart className="size-4" />
-              )}
-              {isSubmitting ? t('pos.cart.processing') : t('pos.cart.checkout')}
+              <span className="flex items-center gap-2">
+                {isSubmitting ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <ShoppingCart className="size-4" />
+                )}
+                {isSubmitting
+                  ? t('pos.cart.processing')
+                  : t('pos.cart.checkout')}
+                {!isSubmitting && (
+                  <kbd className="border-primary-foreground/30 rounded border px-1.5 py-0.5 font-mono text-[10px]">
+                    F2
+                  </kbd>
+                )}
+              </span>
+              <span className="text-sm font-semibold tabular-nums">
+                {formatMoney(total)}
+              </span>
             </Button>
           </div>
         </div>

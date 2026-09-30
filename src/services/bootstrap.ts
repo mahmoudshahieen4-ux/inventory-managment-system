@@ -5,6 +5,7 @@ import { cleanupOldSalesData, isTauriRuntime } from './db'
 import { useInventoryStore } from '@/store/useInventoryStore'
 import { usePayrollStore } from '@/store/usePayrollStore'
 import { useSalesStore } from '@/store/useSalesStore'
+import { useHeldInvoicesStore } from '@/store/useHeldInvoicesStore'
 import { useUIStore } from '@/store/ui-store'
 
 /** Hard cap on the startup hydration so a hung task can never freeze the UI. */
@@ -33,6 +34,7 @@ export function useAppBootstrap(): void {
         cleanupOldSalesData(),
         useInventoryStore.getState().hydrate(),
         useSalesStore.getState().hydrate(),
+        useHeldInvoicesStore.getState().hydrateHeldInvoices(),
         usePayrollStore.getState().hydrate(),
       ]),
       BOOTSTRAP_TIMEOUT_MS,

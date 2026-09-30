@@ -11,7 +11,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { formatMoney } from '@/lib/money'
-import { STORE_INFO } from '@/lib/store-config'
+import { SUPPORT_INFO } from '@/constants/support'
 import { formatTransactionTimestamp } from '@/lib/date-time'
 import type { CreditNote } from '@/types/sales'
 
@@ -45,13 +45,10 @@ export function CreditNoteModal({
 
         <div className="credit-note-print-area text-sm">
           <div className="text-center">
-            <p className="text-base font-semibold">
-              {t('pos.receipt.storeName')}
-            </p>
+            <p className="text-base font-semibold">{SUPPORT_INFO.storeName}</p>
             <p className="text-muted-foreground text-xs">
-              {STORE_INFO.address}
+              {SUPPORT_INFO.phone}
             </p>
-            <p className="text-muted-foreground text-xs">{STORE_INFO.phone}</p>
             <p className="mt-2 text-base font-bold">
               {t('pos.creditNote.heading')}
             </p>

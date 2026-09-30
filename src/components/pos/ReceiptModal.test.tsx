@@ -35,9 +35,8 @@ describe('ReceiptModal', () => {
   it('shows the store header, invoice number and cashier', () => {
     render(<ReceiptModal sale={sale} open onOpenChange={vi.fn()} />)
 
-    expect(screen.getByText('My Store')).toBeInTheDocument()
-    expect(screen.getByText('123 Main Street, City Center')).toBeInTheDocument()
-    expect(screen.getByText('+1 (555) 123-4567')).toBeInTheDocument()
+    expect(screen.getByText('hyper market')).toBeInTheDocument()
+    expect(screen.getByText('01007852868')).toBeInTheDocument()
     expect(screen.getByText('Invoice No.')).toBeInTheDocument()
     // The invoice number appears in the metadata rows and on the barcode strip.
     expect(screen.getAllByText('INV-0001').length).toBeGreaterThan(0)
@@ -64,7 +63,9 @@ describe('ReceiptModal', () => {
     expect(
       screen.getByRole('cell', { name: 'Dark Chocolate Bar' })
     ).toBeInTheDocument()
-    expect(screen.getByRole('cell', { name: '2' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('cell', { name: '2 Box/Piece' })
+    ).toBeInTheDocument()
     expect(screen.getByRole('cell', { name: '4.98 ج.م' })).toBeInTheDocument()
   })
 

@@ -95,6 +95,26 @@ export default tseslint.config(
     },
   },
   {
+    files: ['supabase/functions/**/*.ts'],
+    languageOptions: {
+      parserOptions: {
+        project: false,
+      },
+      globals: {
+        Deno: 'readonly',
+        atob: 'readonly',
+        btoa: 'readonly',
+        crypto: 'readonly',
+        CryptoKey: 'readonly',
+        Request: 'readonly',
+        Response: 'readonly',
+        TextEncoder: 'readonly',
+        Uint8Array: 'readonly',
+        console: 'readonly',
+      },
+    },
+  },
+  {
     ignores: [
       'dist/**',
       'node_modules/**',

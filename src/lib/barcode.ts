@@ -75,3 +75,8 @@ export function playScanBeep(options: ScanBeepOptions = {}): void {
     // Audio feedback is purely cosmetic — never let a beep break a sale.
   }
 }
+
+/** A lower, softer error cue for rejected barcode scans. */
+export function playErrorBeep(): void {
+  playScanBeep({ frequency: 330, durationMs: 120, type: 'triangle' })
+}

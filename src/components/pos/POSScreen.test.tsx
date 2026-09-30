@@ -7,6 +7,7 @@ import { useAuthStore } from '@/store/useAuthStore'
 import { useCartStore } from '@/store/useCartStore'
 import { initialProducts, useInventoryStore } from '@/store/useInventoryStore'
 import { useSalesStore } from '@/store/useSalesStore'
+import { useHeldInvoicesStore } from '@/store/useHeldInvoicesStore'
 import { POSScreen } from './POSScreen'
 
 const { toastError, toastSuccess, toastInfo } = vi.hoisted(() => ({
@@ -46,6 +47,10 @@ describe('POSScreen', () => {
     toastInfo.mockClear()
     useInventoryStore.setState({ products: initialProducts })
     useCartStore.setState({ items: [] })
+    useHeldInvoicesStore.setState({
+      heldInvoices: [],
+      activeHeldInvoiceId: null,
+    })
     useSalesStore.setState({
       sales: [],
       creditNotes: [],
@@ -99,8 +104,20 @@ describe('POSScreen', () => {
     expect(screen.queryByText('Dark Chocolate Bar')).not.toBeInTheDocument()
   })
 
-  it('adds products to the cart and shows totals', async () => {
+  it('auto-focuses product search and filters by a category pill', async () => {
     const user = userEvent.setup()
+    render(<POSScreen />)
+
+    const search = screen.getByLabelText('Search products')
+    expect(search).toHaveFocus()
+    await user.click(screen.getByRole('button', { name: 'Dairy' }))
+
+    expect(screen.getByText('Whole Milk 1L')).toBeInTheDocument()
+    expect(screen.queryByText('Dark Chocolate Bar')).not.toBeInTheDocument()
+  })
+
+  it('adds products to the cart and shows totals', async () => {
+    const user = userEvent.setup({ delay: 100 })
     render(<POSScreen />)
 
     const add = within(getCard('Dark Chocolate Bar')).getByRole('button', {
@@ -147,13 +164,11 @@ describe('POSScreen', () => {
     })
     await user.click(add)
     await user.click(add)
-    await user.click(
-      screen.getByRole('button', { name: 'إتمام البيع / Complete Sale' })
-    )
+    await user.click(screen.getByRole('button', { name: /Complete Sale/ }))
 
     // Receipt dialog opens automatically
     expect(await screen.findByText('Receipt')).toBeInTheDocument()
-    expect(screen.getByText('My Store')).toBeInTheDocument()
+    expect(screen.getByText('hyper market')).toBeInTheDocument()
     // No tax: the grand total equals the line total.
     expect(screen.getAllByText('4.98 ج.م').length).toBeGreaterThan(0)
 
@@ -182,6 +197,41 @@ describe('POSScreen', () => {
     ).toBeInTheDocument()
   })
 
+  it('holds a cart, resumes it, and completes the held sale', async () => {
+    const user = userEvent.setup({ delay: 100 })
+    render(<POSScreen />)
+
+    await user.click(
+      within(getCard('Dark Chocolate Bar')).getByRole('button', { name: 'Add' })
+    )
+    await user.click(screen.getByRole('button', { name: /Hold Cart/ }))
+    await user.type(screen.getByLabelText('Customer Name (optional)'), 'Mina')
+    await user.click(
+      within(screen.getByRole('dialog')).getByRole('button', {
+        name: 'Hold Cart',
+      })
+    )
+
+    expect(useCartStore.getState().items).toHaveLength(0)
+    expect(useHeldInvoicesStore.getState().heldInvoices[0]?.customerName).toBe(
+      'Mina'
+    )
+
+    await user.click(screen.getByRole('button', { name: /Held Invoices/ }))
+    await user.click(
+      within(screen.getByRole('dialog')).getByRole('button', {
+        name: 'Resume Invoice',
+      })
+    )
+    expect(useCartStore.getState().items).toHaveLength(1)
+    expect(useHeldInvoicesStore.getState().heldInvoices).toHaveLength(0)
+
+    await user.click(screen.getByRole('button', { name: /Complete Sale/ }))
+    expect(await screen.findByText('Receipt')).toBeInTheDocument()
+    expect(useHeldInvoicesStore.getState().activeHeldInvoiceId).toBeNull()
+    expect(useSalesStore.getState().sales).toHaveLength(1)
+  })
+
   it('clears the cart with the Clear Cart button', async () => {
     const user = userEvent.setup()
     render(<POSScreen />)
@@ -205,9 +255,7 @@ describe('POSScreen', () => {
     await user.click(
       within(getCard('Dark Chocolate Bar')).getByRole('button', { name: 'Add' })
     )
-    await user.click(
-      screen.getByRole('button', { name: 'إتمام البيع / Complete Sale' })
-    )
+    await user.click(screen.getByRole('button', { name: /Complete Sale/ }))
     await screen.findByText('Receipt')
     // Footer "Close" (first in DOM; the dialog's "X" shares the same name)
     const closeButton = screen.getAllByRole('button', {

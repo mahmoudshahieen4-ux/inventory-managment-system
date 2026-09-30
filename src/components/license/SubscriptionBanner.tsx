@@ -12,7 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { SUPPORT_INFO } from '@/lib/store-config'
+import { SUPPORT_INFO } from '@/constants/support'
 import { getHardwareId, type HardwareId } from '@/services/hardware-id'
 import { useLicenseStore } from '@/store/useLicenseStore'
 

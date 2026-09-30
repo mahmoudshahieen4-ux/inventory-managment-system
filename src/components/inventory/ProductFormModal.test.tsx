@@ -57,10 +57,12 @@ describe('ProductFormModal', () => {
     expect(screen.getByText('Edit Product')).toBeInTheDocument()
     expect(screen.getByLabelText('Name*')).toHaveValue('Espresso Beans 1kg')
     expect(screen.getByLabelText('SKU')).toHaveValue('COF-001')
-    expect(screen.getByLabelText('Quantity*')).toHaveValue(0)
+    expect(screen.getByLabelText('Cartons in Stock*')).toHaveValue(0)
+    expect(screen.getByLabelText('Loose Boxes/Pieces in Stock*')).toHaveValue(0)
     expect(screen.getByLabelText('Min Threshold*')).toHaveValue(10)
-    expect(screen.getByLabelText('Purchase Price*')).toHaveValue('12.5')
-    expect(screen.getByLabelText('Selling Price*')).toHaveValue('24.99')
+    expect(screen.getByLabelText('Carton Purchase Price*')).toHaveValue('12.5')
+    expect(screen.getByLabelText('Carton Selling Price*')).toHaveValue('24.99')
+    expect(screen.getByLabelText('Boxes per Carton*')).toHaveValue(12)
   })
 
   it('marks required fields and links error alerts via aria-describedby', async () => {
@@ -118,7 +120,7 @@ describe('ProductFormModal', () => {
 
     await user.click(screen.getByRole('button', { name: 'Create Product' }))
 
-    expect(screen.getAllByText('This field is required.')).toHaveLength(6)
+    expect(screen.getAllByText('This field is required.')).toHaveLength(7)
     expect(onOpenChangeMock).not.toHaveBeenCalled()
     expect(useInventoryStore.getState().products).toHaveLength(
       initialProducts.length
@@ -131,10 +133,12 @@ describe('ProductFormModal', () => {
 
     await user.type(screen.getByLabelText('Name*'), 'Duplicate Barcode')
     await user.type(screen.getByLabelText('Category*'), 'Testing')
-    await user.type(screen.getByLabelText('Quantity*'), '1')
+    await user.type(screen.getByLabelText('Loose Boxes/Pieces in Stock*'), '1')
     await user.type(screen.getByLabelText('Min Threshold*'), '1')
-    await user.type(screen.getByLabelText('Purchase Price*'), '1')
-    await user.type(screen.getByLabelText('Selling Price*'), '2')
+    await user.type(screen.getByLabelText('Box/Piece Purchase Price*'), '1')
+    await user.type(screen.getByLabelText('Box/Piece Selling Price*'), '2')
+    await user.type(screen.getByLabelText('Carton Purchase Price*'), '12')
+    await user.type(screen.getByLabelText('Carton Selling Price*'), '24')
 
     // prod-001 (Espresso Beans) already owns this barcode.
     await showMoreOptions(user)
@@ -163,12 +167,14 @@ describe('ProductFormModal', () => {
     await user.type(screen.getByLabelText('Category*'), 'Testing')
     // type="number" inputs reject the "-" character via keyboard simulation in
     // jsdom; use fireEvent.change to set a negative value the validator can catch.
-    fireEvent.change(screen.getByLabelText('Quantity*'), {
+    fireEvent.change(screen.getByLabelText('Loose Boxes/Pieces in Stock*'), {
       target: { value: '-5' },
     })
     await user.type(screen.getByLabelText('Min Threshold*'), '2')
-    await user.type(screen.getByLabelText('Purchase Price*'), '1')
-    await user.type(screen.getByLabelText('Selling Price*'), '3')
+    await user.type(screen.getByLabelText('Box/Piece Purchase Price*'), '1')
+    await user.type(screen.getByLabelText('Box/Piece Selling Price*'), '3')
+    await user.type(screen.getByLabelText('Carton Purchase Price*'), '12')
+    await user.type(screen.getByLabelText('Carton Selling Price*'), '36')
 
     await user.click(screen.getByRole('button', { name: 'Create Product' }))
 
@@ -189,11 +195,13 @@ describe('ProductFormModal', () => {
     await showMoreOptions(user)
     await user.type(screen.getByLabelText('SKU'), 'OIL-010')
     // Locale-style decimal comma must be parsed as 12.5
-    await user.type(screen.getByLabelText('Purchase Price*'), '12,50')
-    await user.type(screen.getByLabelText('Selling Price*'), '20')
-    // Quantity input uses useAutoSelectOnFocus; typing '12' char-by-char in
+    await user.type(screen.getByLabelText('Box/Piece Purchase Price*'), '12,50')
+    await user.type(screen.getByLabelText('Box/Piece Selling Price*'), '20')
+    await user.type(screen.getByLabelText('Carton Purchase Price*'), '150')
+    await user.type(screen.getByLabelText('Carton Selling Price*'), '240')
+    // Stock input uses useAutoSelectOnFocus; typing '12' char-by-char in
     // jsdom overwrites the first digit. Set the value directly instead.
-    fireEvent.change(screen.getByLabelText('Quantity*'), {
+    fireEvent.change(screen.getByLabelText('Loose Boxes/Pieces in Stock*'), {
       target: { value: '12' },
     })
     await user.type(screen.getByLabelText('Min Threshold*'), '4')
