@@ -87,6 +87,72 @@ describe('PayrollStore', () => {
     expect(attendance).toHaveLength(3)
   })
 
+  it('bulk-records PRESENT for many workers and upserts the same day', () => {
+    const result = usePayrollStore
+      .getState()
+      .recordAttendanceBulk('2026-09-01', [
+        { workerId: 'worker-001', status: 'PRESENT' },
+        { workerId: 'worker-002', status: 'PRESENT' },
+      ])
+
+    expect(result).toEqual({ saved: 2, skipped: 0 })
+    const { attendance } = usePayrollStore.getState()
+    expect(attendance).toHaveLength(2)
+    expect(attendance.every(record => record.status === 'PRESENT')).toBe(true)
+    // PRESENT is stored with no extra deduction by default.
+    expect(attendance.every(record => record.deductionAmount === 0)).toBe(true)
+
+    // Re-saving the same day updates in place (no duplicates).
+    usePayrollStore
+      .getState()
+      .recordAttendanceBulk('2026-09-01', [
+        { workerId: 'worker-001', status: 'ABSENT', deductionAmount: 25 },
+      ])
+
+    const updated = usePayrollStore.getState().attendance
+    expect(updated).toHaveLength(2)
+    expect(
+      updated.find(record => record.workerId === 'worker-001')
+    ).toMatchObject({ status: 'ABSENT', deductionAmount: 25 })
+  })
+
+  it('bulk attendance skips workers whose month is already paid', () => {
+    const worker = seedWorker()
+    recordAttendance(worker.id, '2026-09-01', 'HALF_DAY', 10)
+    usePayrollStore.getState().paySalary(worker.id, 2026, 9, 'ADMIN')
+
+    const result = usePayrollStore
+      .getState()
+      .recordAttendanceBulk('2026-09-05', [
+        { workerId: worker.id, status: 'PRESENT' },
+        { workerId: 'worker-001', status: 'PRESENT' },
+      ])
+
+    expect(result).toEqual({ saved: 1, skipped: 1 })
+    // The frozen worker gains no new record; the other one is saved.
+    expect(
+      usePayrollStore
+        .getState()
+        .attendance.filter(record => record.workerId === worker.id)
+    ).toHaveLength(1)
+    expect(
+      usePayrollStore
+        .getState()
+        .attendance.some(record => record.workerId === 'worker-001')
+    ).toBe(true)
+  })
+
+  it('bulk attendance rejects a future date', () => {
+    const result = usePayrollStore
+      .getState()
+      .recordAttendanceBulk('2099-01-01', [
+        { workerId: 'worker-001', status: 'PRESENT' },
+      ])
+
+    expect(result).toEqual({ saved: 0, skipped: 1 })
+    expect(usePayrollStore.getState().attendance).toHaveLength(0)
+  })
+
   it('records a cash advance', () => {
     usePayrollStore
       .getState()

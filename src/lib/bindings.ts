@@ -20,6 +20,17 @@ async greet(name: string) : Promise<Result<string, string>> {
 }
 },
 /**
+ * Returns the same opaque 8-character ID for this application installation.
+ */
+async getHardwareId() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_hardware_id") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Loads user preferences from disk.
  * Returns default preferences if the file doesn't exist.
  */

@@ -37,6 +37,7 @@ export function MainWindowContent({
   const currentUser = useAuthStore(state => state.currentUser)
   const licenseInitialized = useLicenseStore(state => state.initialized)
   const licenseStatus = useLicenseStore(state => state.status)
+  const adminOverride = useLicenseStore(state => state.adminOverride)
 
   // Load persisted SQLite data into the stores on startup (desktop only).
   useAppBootstrap()
@@ -56,7 +57,8 @@ export function MainWindowContent({
     }
   }, [currentUser, canAccessActiveView])
 
-  const isLicensed = licenseStatus === 'ACTIVE' || licenseStatus === 'TRIAL'
+  const isLicensed =
+    adminOverride || licenseStatus === 'ACTIVE' || licenseStatus === 'TRIAL'
   const isTrial = licenseStatus === 'TRIAL'
 
   return (

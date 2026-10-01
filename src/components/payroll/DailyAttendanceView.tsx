@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { Check, Coins, Lock, UsersRound } from 'lucide-react'
+import { Check, CheckCheck, Coins, Lock, UsersRound } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -33,12 +33,35 @@ import type {
   Worker,
 } from '@/types/payroll'
 
+/**
+ * Default status for a worker without a saved record: they are presumed
+ * PRESENT (حاضر) so the manager only has to mark the exceptions.
+ */
+const DEFAULT_ATTENDANCE_STATUS: AttendanceStatus = 'PRESENT'
+
+/** Unsaved status/deduction edits for one worker on the selected day. */
+interface AttendanceDraft {
+  status: AttendanceStatus
+  /** Kept as text so an empty field means "no additional deduction". */
+  deduction: string
+}
+
+/** Builds the starting draft: the saved record, or the PRESENT default. */
+function createDraft(existing?: AttendanceRecord): AttendanceDraft {
+  return {
+    status: existing?.status ?? DEFAULT_ATTENDANCE_STATUS,
+    deduction: existing ? String(existing.deductionAmount) : '',
+  }
+}
+
 interface AttendanceRowProps {
   worker: Worker
   /** `YYYY-MM-DD` day this row edits/saves. */
   dateKey: string
-  /** Already-saved attendance for this worker/day, when present. */
-  existing?: AttendanceRecord
+  /** Current (possibly unsaved) status/deduction for this worker. */
+  draft: AttendanceDraft
+  /** Applies a partial edit to this worker's draft. */
+  onDraftChange: (patch: Partial<AttendanceDraft>) => void
   /**
    * Why the row is read-only: the day is in the future, or the month's
    * salary was already paid (frozen). `null` when editing is allowed.
@@ -50,7 +73,8 @@ interface AttendanceRowProps {
 function AttendanceRow({
   worker,
   dateKey,
-  existing,
+  draft,
+  onDraftChange,
   lockReason,
 }: AttendanceRowProps) {
   const { t } = useTranslation()
@@ -61,13 +85,9 @@ function AttendanceRow({
   } = useAutoSelectOnFocus()
   const recordAttendance = usePayrollStore(state => state.recordAttendance)
   const addAdvance = usePayrollStore(state => state.addAdvance)
-  const [status, setStatus] = useState<AttendanceStatus>(
-    existing?.status ?? 'ABSENT'
-  )
-  const [deduction, setDeduction] = useState(
-    existing ? String(existing.deductionAmount) : ''
-  )
   const [advance, setAdvance] = useState('')
+
+  const { status, deduction } = draft
 
   const locked = lockReason !== null
   const lockedLabel =
@@ -134,7 +154,7 @@ function AttendanceRow({
               value === 'HALF_DAY' ||
               value === 'ABSENT'
             ) {
-              setStatus(value)
+              onDraftChange({ status: value })
             }
           }}
           aria-label={t('payroll.attendance.statusLabel', {
@@ -173,7 +193,7 @@ function AttendanceRow({
           onFocus={onQtyFocus}
           onMouseUp={onMouseUpQty}
           onWheel={onWheel}
-          onChange={event => setDeduction(event.target.value)}
+          onChange={event => onDraftChange({ deduction: event.target.value })}
           placeholder="0.00"
           disabled={locked}
           aria-label={t('payroll.attendance.deductionAria', {
@@ -243,6 +263,9 @@ export function DailyAttendanceView() {
   const workers = usePayrollStore(state => state.workers)
   const attendance = usePayrollStore(state => state.attendance)
   const salaryPayments = usePayrollStore(state => state.salaryPayments)
+  const recordAttendanceBulk = usePayrollStore(
+    state => state.recordAttendanceBulk
+  )
   const [selectedDate, setSelectedDate] = useState<Date>(() => new Date())
 
   const dateKey = toDateKey(selectedDate)
@@ -263,15 +286,73 @@ export function DailyAttendanceView() {
 
   const activeWorkers = workers.filter(worker => worker.status === 'ACTIVE')
   const dayRecords = attendance.filter(record => record.date === dateKey)
-  const presentCount = dayRecords.filter(
-    record => record.status === 'PRESENT'
+
+  // Unsaved edits for the selected day, keyed by worker id. Reset whenever the
+  // day changes so every day starts from its saved records (or PRESENT).
+  const [drafts, setDrafts] = useState<Record<string, AttendanceDraft>>({})
+  const [draftedDay, setDraftedDay] = useState(dateKey)
+  if (dateKey !== draftedDay) {
+    setDraftedDay(dateKey)
+    setDrafts({})
+  }
+
+  const recordFor = (workerId: string): AttendanceRecord | undefined =>
+    dayRecords.find(record => record.workerId === workerId)
+
+  /** The live draft for a worker: edited value → saved record → PRESENT. */
+  const draftFor = (workerId: string): AttendanceDraft =>
+    drafts[workerId] ?? createDraft(recordFor(workerId))
+
+  const updateDraft = (workerId: string, patch: Partial<AttendanceDraft>) =>
+    setDrafts(prev => ({
+      ...prev,
+      [workerId]: {
+        ...(prev[workerId] ?? createDraft(recordFor(workerId))),
+        ...patch,
+      },
+    }))
+
+  // Live tallies reflect what is currently on screen (defaults included), so
+  // an unedited day already reads as everyone PRESENT.
+  const presentCount = activeWorkers.filter(
+    worker => draftFor(worker.id).status === 'PRESENT'
   ).length
-  const halfCount = dayRecords.filter(
-    record => record.status === 'HALF_DAY'
+  const halfCount = activeWorkers.filter(
+    worker => draftFor(worker.id).status === 'HALF_DAY'
   ).length
-  const absentCount = dayRecords.filter(
-    record => record.status === 'ABSENT'
+  const absentCount = activeWorkers.filter(
+    worker => draftFor(worker.id).status === 'ABSENT'
   ).length
+
+  // Only unlocked workers can be saved (future days / paid months are frozen).
+  const savableWorkers = activeWorkers.filter(
+    worker => lockReasonFor(worker.id) === null
+  )
+
+  /**
+   * Persists the on-screen status for every worker at once. Workers left
+   * untouched keep the PRESENT default (deduction 0); manual HALF_DAY/ABSENT
+   * choices and deductions are saved as shown.
+   */
+  const handleSaveAll = () => {
+    if (savableWorkers.length === 0) {
+      toast.error(t('payroll.attendance.nothingToSave'))
+      return
+    }
+    const entries = savableWorkers.map(worker => {
+      const { status, deduction } = draftFor(worker.id)
+      return {
+        workerId: worker.id,
+        status,
+        deductionAmount: deduction === '' ? 0 : Number(deduction),
+      }
+    })
+    const { saved } = recordAttendanceBulk(dateKey, entries)
+    if (saved > 0) {
+      toast.success(t('payroll.attendance.savedAll', { count: saved }))
+      setDrafts({})
+    }
+  }
 
   const headClass =
     'text-[11px] font-semibold tracking-wider text-muted-foreground uppercase'
@@ -304,7 +385,7 @@ export function DailyAttendanceView() {
             />
           </div>
 
-          <div className="flex flex-wrap gap-2 text-sm">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
             <Badge
               variant="outline"
               className="border-green-200 bg-green-50 text-green-800 dark:border-emerald-800/40 dark:bg-emerald-950/40 dark:text-[#34D399]"
@@ -323,6 +404,17 @@ export function DailyAttendanceView() {
             >
               {t('payroll.attendance.absent')}: {absentCount}
             </Badge>
+            <Button
+              type="button"
+              size="sm"
+              className="gap-1.5"
+              title={t('payroll.attendance.saveAllHint')}
+              onClick={handleSaveAll}
+              disabled={savableWorkers.length === 0}
+            >
+              <CheckCheck />
+              {t('payroll.attendance.saveAll')}
+            </Button>
           </div>
         </div>
 
@@ -353,9 +445,8 @@ export function DailyAttendanceView() {
                   key={`${worker.id}-${dateKey}`}
                   worker={worker}
                   dateKey={dateKey}
-                  existing={dayRecords.find(
-                    record => record.workerId === worker.id
-                  )}
+                  draft={draftFor(worker.id)}
+                  onDraftChange={patch => updateDraft(worker.id, patch)}
                   lockReason={lockReasonFor(worker.id)}
                 />
               ))}

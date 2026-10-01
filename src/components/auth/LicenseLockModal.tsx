@@ -5,6 +5,7 @@ import {
   MessageCircle,
   Phone,
   ShieldCheck,
+  UserCog,
   X,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
@@ -16,8 +17,9 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { formatLicenseKey } from '@/lib/license-key'
 import { SUPPORT_INFO } from '@/constants/support'
-import { getHardwareId } from '@/services/hardware-id'
+import { fetchMachineId } from '@/services/hardware-id'
 import { useLicenseStore } from '@/store/useLicenseStore'
+import { AdminAuthModal } from './AdminAuthModal'
 
 interface LicenseLockModalProps {
   /**
@@ -42,16 +44,17 @@ export function LicenseLockModal({ onClose }: LicenseLockModalProps) {
   const [submitting, setSubmitting] = useState(false)
   const [invalid, setInvalid] = useState(false)
   const [copiedId, setCopiedId] = useState(false)
+  const [adminOpen, setAdminOpen] = useState(false)
 
   useEffect(() => {
     let mounted = true
 
     const loadHardwareId = async () => {
       try {
-        const hardware = await getHardwareId()
-        if (mounted) setHardwareId(hardware.displayId)
+        const machineId = await fetchMachineId()
+        if (mounted) setHardwareId(machineId)
       } catch {
-        if (mounted) toast.error(t('license.lock.hardwareIdLoadFailed'))
+        if (mounted) setHardwareId(null)
       } finally {
         if (mounted) setHardwareIdLoading(false)
       }
@@ -68,6 +71,23 @@ export function LicenseLockModal({ onClose }: LicenseLockModalProps) {
     const timer = window.setTimeout(() => setCopiedId(false), 2000)
     return () => window.clearTimeout(timer)
   }, [copiedId])
+
+  // Global shortcut: Ctrl/Cmd + Shift + A toggles the admin passcode dialog.
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        event.shiftKey &&
+        event.key.toLowerCase() === 'a'
+      ) {
+        event.preventDefault()
+        setAdminOpen(open => !open)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
 
   const isExpired = status === 'EXPIRED'
 
@@ -95,9 +115,24 @@ export function LicenseLockModal({ onClose }: LicenseLockModalProps) {
     void useLicenseStore.getState().startTrial()
   }
 
+  /** Grants a session-only admin override once the master passcode is valid. */
+  const handleAdminAuthenticated = () => {
+    useLicenseStore.getState().unlockWithAdmin()
+    toast.success(t('admin.auth.success'))
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background p-4">
       <div className="bg-card relative w-full max-w-md space-y-5 rounded-xl border p-6 shadow-lg">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-muted-foreground absolute inset-s-4 top-4 h-7 gap-1.5 px-2 text-xs"
+          onClick={() => setAdminOpen(true)}
+        >
+          <UserCog className="size-3.5" />
+          {t('license.lock.adminLogin')}
+        </Button>
         {onClose && (
           <Button
             variant="ghost"
@@ -138,7 +173,7 @@ export function LicenseLockModal({ onClose }: LicenseLockModalProps) {
             >
               {hardwareIdLoading
                 ? t('license.lock.hardwareIdLoading')
-                : (hardwareId ?? t('license.lock.hardwareIdLoadFailed'))}
+                : (hardwareId ?? '')}
             </span>
             <Button
               variant="outline"
@@ -216,6 +251,12 @@ export function LicenseLockModal({ onClose }: LicenseLockModalProps) {
           </div>
         </div>
       </div>
+
+      <AdminAuthModal
+        open={adminOpen}
+        onOpenChange={setAdminOpen}
+        onAuthenticated={handleAdminAuthenticated}
+      />
     </div>
   )
 }

@@ -1,15 +1,11 @@
 /**
- * Hardware ID (machine fingerprint) generator.
- *
- * Combines OS-provided device info (hostname, OS type, architecture) with a
- * per-install UUID, then derives a deterministic FNV-1a fingerprint. The same
- * machine always produces the same ID, so license keys can be bound to one PC.
+ * Hardware ID access with a native, persisted Tauri ID and stable web fallback.
  */
-import { arch, hostname, type as osType } from '@tauri-apps/plugin-os'
-
+import { commands } from '@/lib/tauri-bindings'
 import { isTauriRuntime } from './db'
 
-const INSTALL_UUID_KEY = 'pos-install-uuid'
+const HARDWARE_ID_CACHE_KEY = 'pos-hardware-id.v1'
+const MACHINE_ID_PATTERN = /^[0-9A-F]{8}$/
 
 export interface HardwareId {
   /** 8 uppercase hex chars embedded inside license keys. */
@@ -18,7 +14,36 @@ export interface HardwareId {
   displayId: string
 }
 
-/** FNV-1a 32-bit hash rendered as 8 uppercase hex chars. */
+function isMachineId(value: string | null): value is string {
+  return Boolean(value && MACHINE_ID_PATTERN.test(value))
+}
+
+function asHardwareId(machineId: string): HardwareId {
+  return { machineId, displayId: machineId }
+}
+
+/** Stable cache for the native identifier or a fallback generated on first run. */
+function readCachedHardwareId(): HardwareId | null {
+  try {
+    const cachedId =
+      localStorage.getItem(HARDWARE_ID_CACHE_KEY)?.toUpperCase() ?? null
+    return isMachineId(cachedId) ? asHardwareId(cachedId) : null
+  } catch {
+    return null
+  }
+}
+
+function cacheHardwareId(machineId: string): HardwareId {
+  const hardwareId = asHardwareId(machineId)
+  try {
+    localStorage.setItem(HARDWARE_ID_CACHE_KEY, machineId)
+  } catch {
+    // The in-memory promise still keeps this fallback stable for this session.
+  }
+  return hardwareId
+}
+
+/** FNV-1a fallback if Web Crypto is unavailable. */
 function fnv1a32(input: string): string {
   let hash = 0x811c9dc5
   for (let index = 0; index < input.length; index++) {
@@ -28,33 +53,34 @@ function fnv1a32(input: string): string {
   return hash.toString(16).padStart(8, '0').toUpperCase()
 }
 
-/** Stable per-install salt stored in the webview's local storage. */
-function getInstallUuid(): string {
+function generateFallbackMachineId(): string {
   try {
-    const existing = localStorage.getItem(INSTALL_UUID_KEY)
-    if (existing) return existing
-    const uuid = crypto.randomUUID()
-    localStorage.setItem(INSTALL_UUID_KEY, uuid)
-    return uuid
+    const bytes = crypto.getRandomValues(new Uint8Array(4))
+    return Array.from(bytes, byte => byte.toString(16).padStart(2, '0'))
+      .join('')
+      .toUpperCase()
   } catch {
-    return 'no-storage'
+    return fnv1a32(`${Date.now()}-${Math.random()}-${Math.random()}`)
   }
 }
 
-/** Groups a hex string into dash-separated 4-char blocks. */
-export function formatHardwareId(hex: string): string {
-  return (hex.match(/.{1,4}/g) ?? []).join('-')
-}
-
 async function computeHardwareId(): Promise<HardwareId> {
-  // Outside Tauri the seed is a constant so tests stay fully deterministic.
-  const seed = isTauriRuntime()
-    ? `${await hostname()}|${await osType()}|${await arch()}|${getInstallUuid()}`
-    : 'dev-fallback'
+  const cached = readCachedHardwareId()
+  if (cached) return cached
 
-  const machineId = fnv1a32(seed)
-  const displayTail = fnv1a32(`${seed}::display`)
-  return { machineId, displayId: formatHardwareId(machineId + displayTail) }
+  if (isTauriRuntime()) {
+    try {
+      const result = await commands.getHardwareId()
+      if (result.status === 'ok') {
+        const nativeId = result.data.trim().toUpperCase()
+        if (isMachineId(nativeId)) return cacheHardwareId(nativeId)
+      }
+    } catch {
+      // Use the persistent web fallback when Tauri IPC is unavailable.
+    }
+  }
+
+  return cacheHardwareId(generateFallbackMachineId())
 }
 
 let hardwareIdPromise: Promise<HardwareId> | null = null
@@ -62,12 +88,31 @@ let hardwareIdPromise: Promise<HardwareId> | null = null
 /** Returns (once, then cached) this machine's hardware fingerprint. */
 export function getHardwareId(): Promise<HardwareId> {
   if (!hardwareIdPromise) {
-    // Reset the cache on rejection so a later caller can retry instead of
-    // being pinned to a permanently failed fingerprint.
-    hardwareIdPromise = computeHardwareId().catch(error => {
-      hardwareIdPromise = null
-      throw error
-    })
+    hardwareIdPromise = computeHardwareId()
   }
   return hardwareIdPromise
+}
+
+/**
+ * Convenience wrapper returning just the machine ID string for the UI.
+ *
+ * Guaranteed to resolve with a valid 8-character fingerprint: it invokes the
+ * native `get_hardware_id` Tauri command first and, if the IPC call is
+ * unavailable (e.g. a release build where the command is missing), it falls
+ * back to the value persisted in `localStorage`, generating and caching one on
+ * first use. It never rejects and never returns an error string, so the lock
+ * screen can always display a usable device ID.
+ */
+export async function fetchMachineId(): Promise<string> {
+  try {
+    const { machineId } = await getHardwareId()
+    if (isMachineId(machineId)) return machineId
+  } catch {
+    // Fall through to the persisted fallback below when IPC is unavailable.
+  }
+
+  const cached = readCachedHardwareId()
+  if (cached) return cached.machineId
+
+  return cacheHardwareId(generateFallbackMachineId()).machineId
 }

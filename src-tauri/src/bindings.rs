@@ -1,10 +1,11 @@
 use tauri_specta::{collect_commands, Builder};
 
 pub fn generate_bindings() -> Builder<tauri::Wry> {
-    use crate::commands::{notifications, preferences, quick_pane, recovery};
+    use crate::commands::{hardware_id, notifications, preferences, quick_pane, recovery};
 
     Builder::<tauri::Wry>::new().commands(collect_commands![
         preferences::greet,
+        hardware_id::get_hardware_id,
         preferences::load_preferences,
         preferences::save_preferences,
         notifications::send_native_notification,

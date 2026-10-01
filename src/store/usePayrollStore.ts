@@ -82,6 +82,22 @@ interface PayrollState {
     }
   ) => void
   /**
+   * Bulk upserts one day of attendance for many workers in a single state
+   * update. Each entry passes through the same future-date / paid-month guards
+   * as `recordAttendance`; locked workers are skipped and counted, never
+   * thrown. Powers the Daily Attendance "save all" action so workers left
+   * untouched persist as PRESENT with no extra deduction.
+   */
+  recordAttendanceBulk: (
+    date: string,
+    entries: {
+      workerId: string
+      status: AttendanceStatus
+      deductionAmount?: number
+      notes?: string
+    }[]
+  ) => { saved: number; skipped: number }
+  /**
    * Records a cash advance for a worker (deducted from the monthly salary).
    * Returns the created record, or null when the date is in the future or
    * the target month was already paid (frozen).
@@ -244,6 +260,60 @@ export const usePayrollStore = create<PayrollState>()(
           'payroll/recordAttendance'
         )
         persist(() => persistAttendance(record))
+      },
+
+      recordAttendanceBulk: (date, entries) => {
+        // Guard: bulk attendance can never target a future day.
+        if (isFutureDate(date)) {
+          toast.error(i18n.t('payroll.errors.futureDate'))
+          return { saved: 0, skipped: entries.length }
+        }
+        const { attendance, salaryPayments } = get()
+        const now = new Date().toISOString()
+        const records: AttendanceRecord[] = []
+        let skipped = 0
+
+        for (const entry of entries) {
+          // Guard: a paid (frozen) month is skipped per worker, not globally.
+          if (isMonthPaid(salaryPayments, entry.workerId, date)) {
+            skipped += 1
+            continue
+          }
+          const existing = attendance.find(
+            record => record.workerId === entry.workerId && record.date === date
+          )
+          records.push({
+            id: existing?.id ?? crypto.randomUUID(),
+            workerId: entry.workerId,
+            date,
+            status: entry.status,
+            deductionAmount: Number(entry.deductionAmount) || 0,
+            notes: entry.notes?.trim() ?? existing?.notes ?? '',
+            createdAt: existing?.createdAt ?? now,
+          })
+        }
+
+        if (records.length === 0) return { saved: 0, skipped }
+
+        const replaced = new Set(
+          records.map(record => `${record.workerId}:${record.date}`)
+        )
+        set(
+          state => ({
+            attendance: [
+              ...state.attendance.filter(
+                item => !replaced.has(`${item.workerId}:${item.date}`)
+              ),
+              ...records,
+            ],
+          }),
+          undefined,
+          'payroll/recordAttendanceBulk'
+        )
+        for (const record of records) {
+          persist(() => persistAttendance(record))
+        }
+        return { saved: records.length, skipped }
       },
 
       addAdvance: (workerId, input) => {

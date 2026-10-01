@@ -84,6 +84,12 @@ interface LicenseState {
   /** True while startup initialization / cloud sync is running. */
   loading: boolean
   /**
+   * True when a developer/admin unlocked the app with the master passcode on
+   * the lock screen. Session-only — never persisted — so a restart always
+   * re-evaluates the real license state.
+   */
+  adminOverride: boolean
+  /**
    * Loads the stored license on startup and, when a machine fingerprint is
    * provided, reconciles it with the Supabase subscription (cloud sync).
    * Applies the dev bypass outside Tauri.
@@ -97,6 +103,8 @@ interface LicenseState {
   runExpirationCheck: () => Promise<ExpirationCheckResult>
   /** Re-runs the cloud subscription sync (e.g. when connectivity returns). */
   syncWithCloud: () => Promise<void>
+  /** Unlocks the app for on-site maintenance via the admin master passcode. */
+  unlockWithAdmin: () => void
 }
 
 /** Builds a new 3-day trial record anchored at the current time. */
@@ -180,6 +188,7 @@ export const useLicenseStore = create<LicenseState>()(
       graceWarning: false,
       clockRollbackDetected: false,
       loading: false,
+      adminOverride: false,
 
       initialize: async machineId => {
         if (!isTauriRuntime()) {
@@ -541,6 +550,15 @@ export const useLicenseStore = create<LicenseState>()(
           }
           await get().runExpirationCheck()
         }
+      },
+
+      /**
+       * Grants a session-only admin override that unlocks the lock screen.
+       * Intentionally NOT persisted — it clears on the next launch so the real
+       * license state is always re-evaluated from storage.
+       */
+      unlockWithAdmin: () => {
+        set({ adminOverride: true }, false, 'license/adminUnlock')
       },
     }),
     { name: 'license-store' }

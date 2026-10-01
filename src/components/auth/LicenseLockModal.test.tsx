@@ -1,8 +1,9 @@
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { render, screen } from '@/test/test-utils'
+import { fireEvent, render, screen, waitFor } from '@/test/test-utils'
 import { useLicenseStore } from '@/store/useLicenseStore'
+import { ADMIN_PASSCODE } from './AdminAuthModal'
 import { LicenseLockModal } from './LicenseLockModal'
 
 const verificationMocks = vi.hoisted(() => ({
@@ -13,6 +14,7 @@ vi.mock('@/services/licenseVerification', () => verificationMocks)
 
 // Deterministic hardware fingerprint for every test.
 vi.mock('@/services/hardware-id', () => ({
+  fetchMachineId: () => Promise.resolve('AABBCCDD'),
   getHardwareId: () =>
     Promise.resolve({
       machineId: 'AABBCCDD',
@@ -33,6 +35,7 @@ function resetState(): void {
     trialExpirationDate: null,
     lastActiveTime: null,
     initialized: true,
+    adminOverride: false,
   })
 }
 
@@ -50,7 +53,7 @@ describe('LicenseLockModal', () => {
 
     expect(screen.getByText('Activation Required')).toBeInTheDocument()
     // The hardware fingerprint resolves asynchronously.
-    expect(await screen.findByText('AABB-CCDD-1122-3344')).toBeInTheDocument()
+    expect(await screen.findByText('AABBCCDD')).toBeInTheDocument()
     expect(screen.getByLabelText('Serial Key')).toBeInTheDocument()
     expect(
       screen.getByRole('button', { name: 'Activate Now' })
@@ -121,5 +124,38 @@ describe('LicenseLockModal', () => {
 
     expect(useLicenseStore.getState().status).toBe('TRIAL')
     expect(useLicenseStore.getState().isTrial).toBe(true)
+  })
+
+  it('opens the admin passcode dialog from the top-corner button', async () => {
+    const user = userEvent.setup()
+    render(<LicenseLockModal />)
+
+    await user.click(screen.getByRole('button', { name: 'Admin Login' }))
+
+    expect(await screen.findByText('Admin Access')).toBeInTheDocument()
+    expect(screen.getByLabelText('Admin passcode')).toBeInTheDocument()
+  })
+
+  it('grants an admin override when the master passcode is entered', async () => {
+    const user = userEvent.setup()
+    render(<LicenseLockModal />)
+
+    await user.click(screen.getByRole('button', { name: 'Admin Login' }))
+    await user.type(screen.getByLabelText('Admin passcode'), ADMIN_PASSCODE)
+    await user.click(screen.getByRole('button', { name: 'Unlock as Admin' }))
+
+    expect(useLicenseStore.getState().adminOverride).toBe(true)
+  })
+
+  it('toggles the admin dialog via the Ctrl+Shift+A shortcut', async () => {
+    render(<LicenseLockModal />)
+
+    fireEvent.keyDown(window, { key: 'a', ctrlKey: true, shiftKey: true })
+    expect(await screen.findByText('Admin Access')).toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 'A', ctrlKey: true, shiftKey: true })
+    await waitFor(() =>
+      expect(screen.queryByText('Admin Access')).not.toBeInTheDocument()
+    )
   })
 })
