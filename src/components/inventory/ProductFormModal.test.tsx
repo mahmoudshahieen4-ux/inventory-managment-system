@@ -46,6 +46,13 @@ describe('ProductFormModal', () => {
     expect(screen.getByText('Add New Product')).toBeInTheDocument()
     expect(screen.getByLabelText('Name*')).toHaveValue('')
     expect(screen.getByLabelText('Category*')).toHaveValue('')
+    expect(screen.getByLabelText('Units per Carton*')).toHaveValue(1)
+    expect(
+      screen.getByLabelText('Loose Boxes/Pieces in Stock (optional)')
+    ).toHaveValue(0)
+    expect(
+      screen.getByLabelText('Loose Boxes/Pieces in Stock (optional)')
+    ).not.toHaveAttribute('required')
     expect(
       screen.getByRole('button', { name: 'Create Product' })
     ).toBeInTheDocument()
@@ -58,11 +65,17 @@ describe('ProductFormModal', () => {
     expect(screen.getByLabelText('Name*')).toHaveValue('Espresso Beans 1kg')
     expect(screen.getByLabelText('SKU')).toHaveValue('COF-001')
     expect(screen.getByLabelText('Cartons in Stock*')).toHaveValue(0)
-    expect(screen.getByLabelText('Loose Boxes/Pieces in Stock*')).toHaveValue(0)
-    expect(screen.getByLabelText('Min Threshold*')).toHaveValue(10)
+    expect(
+      screen.getByLabelText('Loose Boxes/Pieces in Stock (optional)')
+    ).toHaveValue(0)
+    expect(screen.getByLabelText('Units per Carton*')).toHaveValue(12)
     expect(screen.getByLabelText('Carton Purchase Price*')).toHaveValue('12.5')
-    expect(screen.getByLabelText('Carton Selling Price*')).toHaveValue('24.99')
-    expect(screen.getByLabelText('Boxes per Carton*')).toHaveValue(12)
+    expect(
+      screen.getByText('Piece purchase cost automatically: 1.04 ج.م')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('Carton selling price: 24.99 ج.م')
+    ).toBeInTheDocument()
   })
 
   it('marks required fields and links error alerts via aria-describedby', async () => {
@@ -89,16 +102,19 @@ describe('ProductFormModal', () => {
 
     // Collapsed content is inert: untabbable and hidden from assistive tech.
     expect(collapsibleContent()).toHaveAttribute('inert')
+    expect(
+      screen
+        .getByLabelText('Min Threshold')
+        .closest('[data-slot="collapsible-content"]')
+    ).toHaveAttribute('inert')
 
     await showMoreOptions(user)
 
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
     expect(collapsibleContent()).not.toHaveAttribute('inert')
     expect(screen.getByLabelText('Barcode')).toBeInTheDocument()
-    // Selling units (unit / units-per-carton) were removed from the form —
-    // products are managed with plain integer quantities.
     expect(screen.queryByLabelText('Unit')).not.toBeInTheDocument()
-    expect(screen.queryByLabelText('Units per Carton')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Min Threshold')).toBeInTheDocument()
     expect(
       screen.getByRole('button', { name: /hide extra options/i })
     ).toBeInTheDocument()
@@ -120,7 +136,7 @@ describe('ProductFormModal', () => {
 
     await user.click(screen.getByRole('button', { name: 'Create Product' }))
 
-    expect(screen.getAllByText('This field is required.')).toHaveLength(7)
+    expect(screen.getAllByText('This field is required.')).toHaveLength(4)
     expect(onOpenChangeMock).not.toHaveBeenCalled()
     expect(useInventoryStore.getState().products).toHaveLength(
       initialProducts.length
@@ -133,12 +149,12 @@ describe('ProductFormModal', () => {
 
     await user.type(screen.getByLabelText('Name*'), 'Duplicate Barcode')
     await user.type(screen.getByLabelText('Category*'), 'Testing')
-    await user.type(screen.getByLabelText('Loose Boxes/Pieces in Stock*'), '1')
-    await user.type(screen.getByLabelText('Min Threshold*'), '1')
-    await user.type(screen.getByLabelText('Box/Piece Purchase Price*'), '1')
-    await user.type(screen.getByLabelText('Box/Piece Selling Price*'), '2')
+    await user.type(
+      screen.getByLabelText('Loose Boxes/Pieces in Stock (optional)'),
+      '1'
+    )
     await user.type(screen.getByLabelText('Carton Purchase Price*'), '12')
-    await user.type(screen.getByLabelText('Carton Selling Price*'), '24')
+    await user.type(screen.getByLabelText('Box/Piece Selling Price*'), '2')
 
     // prod-001 (Espresso Beans) already owns this barcode.
     await showMoreOptions(user)
@@ -167,14 +183,12 @@ describe('ProductFormModal', () => {
     await user.type(screen.getByLabelText('Category*'), 'Testing')
     // type="number" inputs reject the "-" character via keyboard simulation in
     // jsdom; use fireEvent.change to set a negative value the validator can catch.
-    fireEvent.change(screen.getByLabelText('Loose Boxes/Pieces in Stock*'), {
-      target: { value: '-5' },
-    })
-    await user.type(screen.getByLabelText('Min Threshold*'), '2')
-    await user.type(screen.getByLabelText('Box/Piece Purchase Price*'), '1')
-    await user.type(screen.getByLabelText('Box/Piece Selling Price*'), '3')
+    fireEvent.change(
+      screen.getByLabelText('Loose Boxes/Pieces in Stock (optional)'),
+      { target: { value: '-5' } }
+    )
     await user.type(screen.getByLabelText('Carton Purchase Price*'), '12')
-    await user.type(screen.getByLabelText('Carton Selling Price*'), '36')
+    await user.type(screen.getByLabelText('Box/Piece Selling Price*'), '3')
 
     await user.click(screen.getByRole('button', { name: 'Create Product' }))
 
@@ -194,17 +208,34 @@ describe('ProductFormModal', () => {
 
     await showMoreOptions(user)
     await user.type(screen.getByLabelText('SKU'), 'OIL-010')
-    // Locale-style decimal comma must be parsed as 12.5
-    await user.type(screen.getByLabelText('Box/Piece Purchase Price*'), '12,50')
+    // Locale-style decimal comma must be parsed as 120.
+    await user.type(screen.getByLabelText('Carton Purchase Price*'), '120,00')
     await user.type(screen.getByLabelText('Box/Piece Selling Price*'), '20')
-    await user.type(screen.getByLabelText('Carton Purchase Price*'), '150')
-    await user.type(screen.getByLabelText('Carton Selling Price*'), '240')
+    expect(
+      screen.getByText('Piece purchase cost automatically: 120.00 ج.م')
+    ).toBeInTheDocument()
     // Stock input uses useAutoSelectOnFocus; typing '12' char-by-char in
     // jsdom overwrites the first digit. Set the value directly instead.
-    fireEvent.change(screen.getByLabelText('Loose Boxes/Pieces in Stock*'), {
+    fireEvent.change(
+      screen.getByLabelText('Loose Boxes/Pieces in Stock (optional)'),
+      { target: { value: '12' } }
+    )
+    fireEvent.change(screen.getByLabelText('Units per Carton*'), {
       target: { value: '12' },
     })
-    await user.type(screen.getByLabelText('Min Threshold*'), '4')
+    expect(
+      screen.getByText('Piece purchase cost automatically: 10.00 ج.م')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('Carton selling price: 240.00 ج.م')
+    ).toBeInTheDocument()
+
+    await user.click(
+      screen.getByRole('button', { name: 'Set bulk carton price' })
+    )
+    fireEvent.change(screen.getByLabelText('Set bulk carton price'), {
+      target: { value: '225' },
+    })
 
     await user.click(screen.getByRole('button', { name: 'Create Product' }))
 
@@ -216,15 +247,52 @@ describe('ProductFormModal', () => {
     expect(created).toMatchObject({
       name: 'Olive Oil 1L',
       quantity: 12,
-      minThreshold: 4,
-      purchasePrice: 12.5,
+      minThreshold: 0,
+      purchasePrice: 10,
       sellingPrice: 20,
+      boxesPerCarton: 12,
+      boxPurchasePrice: 10,
+      cartonPurchasePrice: 120,
+      cartonSellingPrice: 225,
     })
   }, 15000)
+
+  it('treats a cleared loose-box quantity as zero', async () => {
+    const user = userEvent.setup()
+    renderCreateModal()
+
+    await user.type(screen.getByLabelText('Name*'), 'Single Item')
+    await user.type(screen.getByLabelText('Category*'), 'Testing')
+    fireEvent.change(screen.getByLabelText('Cartons in Stock*'), {
+      target: { value: '1' },
+    })
+    fireEvent.change(screen.getByLabelText('Units per Carton*'), {
+      target: { value: '12' },
+    })
+    await user.type(screen.getByLabelText('Carton Purchase Price*'), '24')
+    await user.type(screen.getByLabelText('Box/Piece Selling Price*'), '3')
+    await user.clear(
+      screen.getByLabelText('Loose Boxes/Pieces in Stock (optional)')
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Create Product' }))
+
+    const created = useInventoryStore
+      .getState()
+      .products.find(product => product.name === 'Single Item')
+    expect(created).toMatchObject({ boxQuantity: 0, quantity: 12 })
+  })
 
   it('updates an existing product and closes the modal', async () => {
     const user = userEvent.setup()
     renderEditModal(findProduct('prod-002'))
+
+    expect(
+      screen.getByText('Carton selling price: 3.49 ج.م')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Set bulk carton price' })
+    ).toBeInTheDocument()
 
     const nameInput = screen.getByLabelText('Name*')
     await user.clear(nameInput)

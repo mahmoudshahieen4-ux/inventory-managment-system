@@ -18,6 +18,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAutoSelectOnFocus } from '@/hooks/use-auto-select-on-focus'
 import { generateBarcode } from '@/lib/barcode'
+import { formatMoney, roundMoney } from '@/lib/money'
 import { cn } from '@/lib/utils'
 import { useInventoryStore } from '@/store/useInventoryStore'
 import type { NewProduct, Product } from '@/types/inventory'
@@ -34,9 +35,8 @@ interface ProductFormValues {
   boxQuantity: string
   boxesPerCarton: string
   cartonPurchasePrice: string
-  boxPurchasePrice: string
-  cartonSellingPrice: string
   boxSellingPrice: string
+  cartonSellingPriceOverride: string
   minThreshold: string
 }
 
@@ -56,23 +56,18 @@ const EMPTY_VALUES: ProductFormValues = {
   category: '',
   cartonQuantity: '0',
   boxQuantity: '0',
-  boxesPerCarton: '12',
+  boxesPerCarton: '1',
   cartonPurchasePrice: '',
-  boxPurchasePrice: '',
-  cartonSellingPrice: '',
   boxSellingPrice: '',
-  minThreshold: '',
+  cartonSellingPriceOverride: '',
+  minThreshold: '0',
 }
 
 const NUMBER_FIELDS = [
   'cartonQuantity',
-  'boxQuantity',
   'boxesPerCarton',
   'cartonPurchasePrice',
-  'boxPurchasePrice',
-  'cartonSellingPrice',
   'boxSellingPrice',
-  'minThreshold',
 ] as const
 
 function toFormValues(product: Product): ProductFormValues {
@@ -83,11 +78,15 @@ function toFormValues(product: Product): ProductFormValues {
     category: product.category,
     cartonQuantity: String(product.cartonQuantity),
     boxQuantity: String(product.boxQuantity),
-    boxesPerCarton: String(product.boxesPerCarton),
+    boxesPerCarton: String(product.unitsPerCarton ?? 1),
     cartonPurchasePrice: String(product.cartonPurchasePrice),
-    boxPurchasePrice: String(product.boxPurchasePrice),
-    cartonSellingPrice: String(product.cartonSellingPrice),
     boxSellingPrice: String(product.boxSellingPrice),
+    cartonSellingPriceOverride:
+      product.unitsPerCarton !== undefined &&
+      roundMoney(product.boxSellingPrice * product.unitsPerCarton) !==
+        roundMoney(product.cartonSellingPrice)
+        ? String(product.cartonSellingPrice)
+        : '',
     minThreshold: String(product.minThreshold),
   }
 }
@@ -96,6 +95,31 @@ function parseNumber(value: string): number {
   const normalized = value.trim().replace(/,/g, '.')
   if (normalized === '') return NaN
   return Number(normalized)
+}
+
+function calculateDerivedPrices(values: ProductFormValues) {
+  const unitsPerCarton = parseNumber(values.boxesPerCarton)
+  const cartonPurchasePrice = parseNumber(values.cartonPurchasePrice)
+  const boxSellingPrice = parseNumber(values.boxSellingPrice)
+  const sellingPriceOverride = parseNumber(values.cartonSellingPriceOverride)
+  const validUnits = Number.isFinite(unitsPerCarton) && unitsPerCarton > 0
+  const calculatedCartonSellingPrice =
+    validUnits && Number.isFinite(boxSellingPrice)
+      ? roundMoney(boxSellingPrice * unitsPerCarton)
+      : null
+
+  return {
+    boxPurchasePrice:
+      validUnits && Number.isFinite(cartonPurchasePrice)
+        ? roundMoney(cartonPurchasePrice / unitsPerCarton)
+        : null,
+    calculatedCartonSellingPrice,
+    cartonSellingPrice:
+      Number.isFinite(sellingPriceOverride) &&
+      values.cartonSellingPriceOverride.trim() !== ''
+        ? roundMoney(sellingPriceOverride)
+        : calculatedCartonSellingPrice,
+  }
 }
 
 /**
@@ -108,7 +132,7 @@ function generateProductCode(): string {
 }
 
 /** Fields that live inside the collapsed "more options" section. */
-const OPTIONAL_ERROR_FIELDS = ['sku', 'barcode'] as const
+const OPTIONAL_ERROR_FIELDS = ['sku', 'barcode', 'minThreshold'] as const
 
 /** ARIA props `FormField` hands to the wrapped control. */
 interface FieldControlProps {
@@ -216,6 +240,37 @@ function validate(
     }
   }
 
+  if (values.boxQuantity.trim() !== '') {
+    const boxQuantity = parseNumber(values.boxQuantity)
+    if (Number.isNaN(boxQuantity)) {
+      errors.boxQuantity = notANumber
+    } else if (boxQuantity < 0) {
+      errors.boxQuantity = negative
+    } else if (!Number.isInteger(boxQuantity)) {
+      errors.boxQuantity = t('inventory.form.validation.positiveInteger')
+    }
+  }
+
+  if (values.minThreshold.trim() !== '') {
+    const threshold = parseNumber(values.minThreshold)
+    if (Number.isNaN(threshold)) {
+      errors.minThreshold = notANumber
+    } else if (threshold < 0) {
+      errors.minThreshold = negative
+    } else if (!Number.isInteger(threshold)) {
+      errors.minThreshold = t('inventory.form.validation.positiveInteger')
+    }
+  }
+
+  if (values.cartonSellingPriceOverride.trim() !== '') {
+    const override = parseNumber(values.cartonSellingPriceOverride)
+    if (Number.isNaN(override)) {
+      errors.cartonSellingPriceOverride = notANumber
+    } else if (override < 0) {
+      errors.cartonSellingPriceOverride = negative
+    }
+  }
+
   return errors
 }
 
@@ -239,6 +294,7 @@ export function ProductFormModal({
   const [errors, setErrors] = useState<FormErrors>({})
   // Optional fields are progressively disclosed: collapsed on open.
   const [optionsOpen, setOptionsOpen] = useState(false)
+  const derivedPrices = calculateDerivedPrices(values)
 
   // Track the previous open/product combo and reset the form state whenever
   // the modal opens or the target product changes. Uses the React-recommended
@@ -294,25 +350,26 @@ export function ProductFormModal({
 
     if (Object.keys(nextErrors).length > 0) return
 
+    const boxQuantity = parseNumber(values.boxQuantity) || 0
     const payload: NewProduct = {
       name: values.name.trim(),
       sku: values.sku.trim(),
       barcode: values.barcode.trim() || undefined,
       category: values.category.trim(),
       cartonQuantity: parseNumber(values.cartonQuantity),
-      boxQuantity: parseNumber(values.boxQuantity),
+      boxQuantity,
       boxesPerCarton: parseNumber(values.boxesPerCarton),
       cartonPurchasePrice: parseNumber(values.cartonPurchasePrice),
-      boxPurchasePrice: parseNumber(values.boxPurchasePrice),
-      cartonSellingPrice: parseNumber(values.cartonSellingPrice),
+      boxPurchasePrice: derivedPrices.boxPurchasePrice ?? 0,
+      cartonSellingPrice: derivedPrices.cartonSellingPrice ?? 0,
       boxSellingPrice: parseNumber(values.boxSellingPrice),
       quantity:
         parseNumber(values.cartonQuantity) *
           parseNumber(values.boxesPerCarton) +
-        parseNumber(values.boxQuantity),
-      purchasePrice: parseNumber(values.boxPurchasePrice),
+        boxQuantity,
+      purchasePrice: derivedPrices.boxPurchasePrice ?? 0,
       sellingPrice: parseNumber(values.boxSellingPrice),
-      minThreshold: parseNumber(values.minThreshold),
+      minThreshold: parseNumber(values.minThreshold) || 0,
     }
 
     if (product) {
@@ -379,33 +436,29 @@ export function ProductFormModal({
             )}
           </FormField>
 
-          {[
-            ['cartonQuantity', 'inventory.form.cartonQuantity', 1],
-            ['boxQuantity', 'inventory.form.boxQuantity', 1],
-            ['boxesPerCarton', 'inventory.form.boxesPerCarton', 1],
-            ['cartonPurchasePrice', 'inventory.form.cartonPurchasePrice', 0.01],
-            ['boxPurchasePrice', 'inventory.form.boxPurchasePrice', 0.01],
-            ['cartonSellingPrice', 'inventory.form.cartonSellingPrice', 0.01],
-            ['boxSellingPrice', 'inventory.form.boxSellingPrice', 0.01],
-          ].map(([field, label, step]) => {
+          {(
+            [
+              ['cartonQuantity', 'inventory.form.cartonQuantity'],
+              ['boxQuantity', 'inventory.form.boxQuantity'],
+              ['boxesPerCarton', 'inventory.form.boxesPerCarton'],
+            ] as const
+          ).map(([field, label]) => {
             const name = field as keyof ProductFormValues
-            const id = `product-${name}`
             return (
               <FormField
                 key={name}
-                id={id}
-                label={t(label as string)}
+                id={`product-${name}`}
+                label={t(label)}
                 error={errors[name]}
-                required
+                required={name !== 'boxQuantity'}
               >
                 {controlProps => (
                   <Input
                     {...controlProps}
-                    required
-                    type={(step as number) === 1 ? 'number' : 'text'}
-                    min={(step as number) === 1 ? 0 : undefined}
-                    step={(step as number) === 1 ? 1 : undefined}
-                    inputMode={(step as number) === 1 ? undefined : 'decimal'}
+                    required={name !== 'boxQuantity'}
+                    type="number"
+                    min={name === 'boxesPerCarton' ? 1 : 0}
+                    step="1"
                     value={values[name]}
                     onFocus={onQtyFocus}
                     onMouseUp={onMouseUpQty}
@@ -417,25 +470,112 @@ export function ProductFormModal({
             )
           })}
 
+          <div className="border-border my-3 border-t pt-3 sm:col-span-2">
+            <h3 className="text-sm font-semibold">
+              {t('inventory.form.pricing')}
+            </h3>
+          </div>
+
           <FormField
-            id="product-min-threshold"
-            label={t('inventory.form.minThreshold')}
-            error={errors.minThreshold}
+            id="product-cartonPurchasePrice"
+            label={t('inventory.form.cartonPurchasePrice')}
+            error={errors.cartonPurchasePrice}
             required
           >
             {controlProps => (
-              <Input
-                {...controlProps}
-                required
-                type="number"
-                min={0}
-                step="1"
-                value={values.minThreshold}
-                onFocus={onQtyFocus}
-                onMouseUp={onMouseUpQty}
-                onWheel={onWheel}
-                onChange={setField('minThreshold')}
-              />
+              <div className="grid gap-2">
+                <Input
+                  {...controlProps}
+                  required
+                  inputMode="decimal"
+                  value={values.cartonPurchasePrice}
+                  onChange={setField('cartonPurchasePrice')}
+                />
+                <p aria-live="polite" className="text-muted-foreground text-xs">
+                  {t('inventory.form.boxPurchasePriceCalculated', {
+                    price:
+                      derivedPrices.boxPurchasePrice === null
+                        ? '-'
+                        : formatMoney(derivedPrices.boxPurchasePrice),
+                  })}
+                </p>
+              </div>
+            )}
+          </FormField>
+
+          <FormField
+            id="product-boxSellingPrice"
+            label={t('inventory.form.boxSellingPrice')}
+            error={errors.boxSellingPrice}
+            required
+          >
+            {controlProps => (
+              <div className="grid gap-2">
+                <Input
+                  {...controlProps}
+                  required
+                  inputMode="decimal"
+                  value={values.boxSellingPrice}
+                  onChange={setField('boxSellingPrice')}
+                />
+                <p aria-live="polite" className="text-muted-foreground text-xs">
+                  {t('inventory.form.cartonSellingPriceCalculated', {
+                    price:
+                      derivedPrices.calculatedCartonSellingPrice === null
+                        ? '-'
+                        : formatMoney(
+                            derivedPrices.calculatedCartonSellingPrice
+                          ),
+                  })}
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() =>
+                      setValues(current => ({
+                        ...current,
+                        cartonSellingPriceOverride:
+                          current.cartonSellingPriceOverride.trim() === ''
+                            ? String(derivedPrices.cartonSellingPrice ?? '')
+                            : '',
+                      }))
+                    }
+                  >
+                    {values.cartonSellingPriceOverride.trim() === ''
+                      ? t('inventory.form.cartonSellingOverride')
+                      : t('inventory.form.cartonSellingUseCalculated')}
+                  </Button>
+                  {values.cartonSellingPriceOverride.trim() !== '' && (
+                    <Input
+                      id="product-cartonSellingPriceOverride"
+                      aria-label={t('inventory.form.cartonSellingOverride')}
+                      aria-invalid={
+                        errors.cartonSellingPriceOverride ? true : undefined
+                      }
+                      aria-describedby={
+                        errors.cartonSellingPriceOverride
+                          ? 'product-cartonSellingPriceOverride-error'
+                          : undefined
+                      }
+                      inputMode="decimal"
+                      value={values.cartonSellingPriceOverride}
+                      onChange={setField('cartonSellingPriceOverride')}
+                      className="max-w-48"
+                    />
+                  )}
+                </div>
+                {errors.cartonSellingPriceOverride && (
+                  <p
+                    id="product-cartonSellingPriceOverride-error"
+                    role="alert"
+                    className="text-destructive text-sm"
+                  >
+                    {errors.cartonSellingPriceOverride}
+                  </p>
+                )}
+              </div>
             )}
           </FormField>
 
@@ -462,6 +602,26 @@ export function ProductFormModal({
             }
           >
             <div className="grid gap-5 pt-4 sm:grid-cols-2">
+              <FormField
+                id="product-min-threshold"
+                label={t('inventory.form.minThreshold')}
+                error={errors.minThreshold}
+              >
+                {controlProps => (
+                  <Input
+                    {...controlProps}
+                    type="number"
+                    min={0}
+                    step="1"
+                    value={values.minThreshold}
+                    onFocus={onQtyFocus}
+                    onMouseUp={onMouseUpQty}
+                    onWheel={onWheel}
+                    onChange={setField('minThreshold')}
+                  />
+                )}
+              </FormField>
+
               <FormField
                 id="product-sku"
                 label={t('inventory.form.sku')}

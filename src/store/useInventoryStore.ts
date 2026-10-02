@@ -228,7 +228,7 @@ function coerceProduct(product: ProductCoerceInput): Product {
     boxSellingPrice,
     cartonPurchasePrice:
       product.cartonPurchasePrice === undefined
-        ? boxPurchasePrice * boxesPerCarton
+        ? Number(product.purchasePrice) || 0
         : Number(product.cartonPurchasePrice) || 0,
     boxPurchasePrice,
   }
@@ -269,8 +269,6 @@ export const useInventoryStore = create<InventoryState>()(
           updates.boxPurchasePrice === undefined
         ) {
           normalizedUpdates.boxPurchasePrice = updates.purchasePrice
-          normalizedUpdates.cartonPurchasePrice =
-            updates.purchasePrice * base.boxesPerCarton
         }
         if (
           updates.sellingPrice !== undefined &&

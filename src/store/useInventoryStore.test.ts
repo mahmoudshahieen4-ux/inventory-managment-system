@@ -70,6 +70,21 @@ describe('InventoryStore', () => {
     })
   })
 
+  it('does not derive carton purchase cost from a piece purchase-cost update', () => {
+    const target = findProduct('prod-001')
+
+    useInventoryStore
+      .getState()
+      .updateProduct(target.id, { purchasePrice: 7.5 })
+
+    const updated = useInventoryStore
+      .getState()
+      .products.find(product => product.id === target.id)
+
+    expect(updated?.boxPurchasePrice).toBe(7.5)
+    expect(updated?.cartonPurchasePrice).toBe(target.cartonPurchasePrice)
+  })
+
   it('leaves other products untouched when editing one', () => {
     const before = useInventoryStore.getState().products
     const first = before[0]
