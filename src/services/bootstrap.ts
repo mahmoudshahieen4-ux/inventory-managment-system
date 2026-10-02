@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 
 import { withTimeout } from '@/lib/timeout'
 import { cleanupOldSalesData, isTauriRuntime } from './db'
+import { useCustomerStore } from '@/store/useCustomerStore'
 import { useInventoryStore } from '@/store/useInventoryStore'
 import { usePayrollStore } from '@/store/usePayrollStore'
 import { useSalesStore } from '@/store/useSalesStore'
@@ -36,6 +37,7 @@ export function useAppBootstrap(): void {
         useSalesStore.getState().hydrate(),
         useHeldInvoicesStore.getState().hydrateHeldInvoices(),
         usePayrollStore.getState().hydrate(),
+        useCustomerStore.getState().hydrate(),
       ]),
       BOOTSTRAP_TIMEOUT_MS,
       { label: 'database bootstrap' }

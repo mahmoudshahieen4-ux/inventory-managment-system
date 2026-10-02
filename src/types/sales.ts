@@ -21,6 +21,9 @@ export interface SaleItem extends CartItem {
   profit?: number
 }
 
+/** How a sale was settled at checkout. */
+export type PaymentType = 'CASH' | 'CREDIT'
+
 /** A completed sale transaction and its receipt data. */
 export interface Sale {
   id: string
@@ -33,6 +36,13 @@ export interface Sale {
   totalProfit?: number
   cashierId: string
   createdAt: string
+  /** Linked customer account when the sale was on account (آجل). */
+  customerId?: string
+  customerName?: string
+  /** Settlement type: cash in full, or credit (possibly partially paid). */
+  paymentType?: PaymentType
+  /** Amount actually paid at checkout (== `total` for a full cash sale). */
+  paidAmount?: number
 }
 
 /** A line included in a partial or full return. */

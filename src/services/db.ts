@@ -4,9 +4,11 @@
  * All functions are no-ops when not running inside the Tauri desktop runtime
  * (browser dev server / unit tests), so stores keep working unchanged.
  */
+import { appDataDir, join } from '@tauri-apps/api/path'
 import Database from '@tauri-apps/plugin-sql'
 
 import { logger } from '@/lib/logger'
+import { roundMoney } from '@/lib/money'
 import {
   DEFAULT_PRODUCT_UNIT,
   resolveProductUnit,
@@ -14,6 +16,12 @@ import {
 } from '@/lib/product-unit'
 import { cutoffForRange } from '@/lib/sales-time-range'
 import type { AuthAccount } from '@/types/auth'
+import type {
+  Customer,
+  CustomerLedgerEntry,
+  CustomerLedgerInput,
+  CustomerLedgerType,
+} from '@/types/customer'
 import type { Product, ProductBatch, StockTransaction } from '@/types/inventory'
 import type {
   AdvanceRecord,
@@ -37,9 +45,55 @@ export function isTauriRuntime(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
 
-const DB_URL = 'sqlite:pos.db'
+const DB_FILENAME = 'pos.db'
+
+/**
+ * Fallback connection string, used only when the app-data directory cannot be
+ * resolved (e.g. a not-yet-initialised IPC bridge). `tauri-plugin-sql` maps a
+ * relative SQLite path onto the app's per-user config directory, which is the
+ * same writable location on Windows and macOS — so this stays a safe default
+ * instead of pointing at the install directory.
+ */
+const RELATIVE_DB_URL = `sqlite:${DB_FILENAME}`
 
 let dbPromise: Promise<Database> | null = null
+
+/** Cached result of {@link resolveDatabaseUrl} — the path never changes. */
+let dbUrlPromise: Promise<string> | null = null
+
+/**
+ * Resolves the SQLite connection string to an **absolute** path inside the
+ * per-user app data directory (`%APPDATA%\com.egyptpos.store` on Windows).
+ *
+ * Why explicit resolution instead of trusting the plugin default: a relative
+ * `sqlite:pos.db` is resolved by `tauri-plugin-sql` against the app *config*
+ * directory, and if the app is ever launched/installed somewhere that is not
+ * user-writable (e.g. under `C:\Program Files`) the first write can fail with
+ * a permission error. `appDataDir()` is the OS-guaranteed writable location,
+ * and the Rust side (`lib.rs`) creates it at startup.
+ *
+ * The plugin maps `sqlite:<path>` with `app_config_dir().push(<path>)`; an
+ * absolute path replaces the base, so the database is pinned exactly where we
+ * ask. Any failure degrades to {@link RELATIVE_DB_URL} rather than crashing.
+ */
+function resolveDatabaseUrl(): Promise<string> {
+  if (!dbUrlPromise) {
+    dbUrlPromise = (async () => {
+      try {
+        const dataDir = await appDataDir()
+        const filePath = await join(dataDir, DB_FILENAME)
+        return `sqlite:${filePath}`
+      } catch (error) {
+        logger.warn(
+          'Could not resolve the app data directory — falling back to the plugin default location',
+          { error: String(error) }
+        )
+        return RELATIVE_DB_URL
+      }
+    })()
+  }
+  return dbUrlPromise
+}
 
 /**
  * Concurrency pragmas applied right after the connection opens.
@@ -126,9 +180,11 @@ function serialize(db: Database): Database {
 /** Opens (once) the raw SQLite connection and ensures the schema exists. */
 function loadDb(): Promise<Database> {
   if (!dbPromise) {
-    dbPromise = Database.load(DB_URL).then(async db => {
-      await applySqlitePragmas(db)
-      await db.execute(`
+    dbPromise = resolveDatabaseUrl()
+      .then(url => Database.load(url))
+      .then(async db => {
+        await applySqlitePragmas(db)
+        await db.execute(`
         CREATE TABLE IF NOT EXISTS products (
           id TEXT PRIMARY KEY,
           name TEXT NOT NULL,
@@ -144,7 +200,7 @@ function loadDb(): Promise<Database> {
           updated_at TEXT NOT NULL
         )
       `)
-      await db.execute(`
+        await db.execute(`
         CREATE TABLE IF NOT EXISTS product_batches (
           id TEXT PRIMARY KEY,
           product_id TEXT NOT NULL,
@@ -156,13 +212,13 @@ function loadDb(): Promise<Database> {
           FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
         )
       `)
-      await db.execute(
-        'CREATE INDEX IF NOT EXISTS idx_product_batches_product_expiry ON product_batches(product_id, expiry_date, created_at)'
-      )
-      // Stock movement audit log — records every "stock in" (purchase invoice /
-      // shipment received) so inventory changes are traceable. Sale-driven
-      // decrements are logged inside persistSaleAtomic on the same transaction.
-      await db.execute(`CREATE TABLE IF NOT EXISTS stock_transactions (
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_product_batches_product_expiry ON product_batches(product_id, expiry_date, created_at)'
+        )
+        // Stock movement audit log — records every "stock in" (purchase invoice /
+        // shipment received) so inventory changes are traceable. Sale-driven
+        // decrements are logged inside persistSaleAtomic on the same transaction.
+        await db.execute(`CREATE TABLE IF NOT EXISTS stock_transactions (
         id TEXT PRIMARY KEY,
         product_id TEXT NOT NULL REFERENCES products(id),
         type TEXT NOT NULL,
@@ -173,13 +229,13 @@ function loadDb(): Promise<Database> {
         user_id TEXT NOT NULL,
         created_at TEXT NOT NULL
       )`)
-      await db.execute(
-        'CREATE INDEX IF NOT EXISTS idx_stock_transactions_product_id ON stock_transactions(product_id)'
-      )
-      await db.execute(
-        'CREATE INDEX IF NOT EXISTS idx_stock_transactions_created_at ON stock_transactions(created_at)'
-      )
-      await db.execute(`
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_stock_transactions_product_id ON stock_transactions(product_id)'
+        )
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_stock_transactions_created_at ON stock_transactions(created_at)'
+        )
+        await db.execute(`
         CREATE TABLE IF NOT EXISTS sales (
           id TEXT PRIMARY KEY,
           invoice_number TEXT NOT NULL,
@@ -191,7 +247,7 @@ function loadDb(): Promise<Database> {
           created_at TEXT NOT NULL
         )
       `)
-      await db.execute(`
+        await db.execute(`
         CREATE TABLE IF NOT EXISTS held_invoices (
           id TEXT PRIMARY KEY,
           customer_name TEXT,
@@ -203,10 +259,10 @@ function loadDb(): Promise<Database> {
           created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
         )
       `)
-      await db.execute(
-        'CREATE INDEX IF NOT EXISTS idx_held_invoices_created_at ON held_invoices(created_at)'
-      )
-      await db.execute(`
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_held_invoices_created_at ON held_invoices(created_at)'
+        )
+        await db.execute(`
         CREATE TABLE IF NOT EXISTS sale_items (
           id TEXT PRIMARY KEY,
           sale_id TEXT NOT NULL REFERENCES sales(id),
@@ -220,13 +276,13 @@ function loadDb(): Promise<Database> {
           profit REAL NOT NULL DEFAULT 0
         )
       `)
-      await db.execute(`CREATE TABLE IF NOT EXISTS daily_summaries (
+        await db.execute(`CREATE TABLE IF NOT EXISTS daily_summaries (
         summary_date TEXT PRIMARY KEY,
         revenue REAL NOT NULL DEFAULT 0,
         profit REAL NOT NULL DEFAULT 0,
         updated_at TEXT NOT NULL
       )`)
-      await db.execute(`CREATE TABLE IF NOT EXISTS credit_notes (
+        await db.execute(`CREATE TABLE IF NOT EXISTS credit_notes (
         id TEXT PRIMARY KEY,
         credit_note_number TEXT NOT NULL UNIQUE,
         original_invoice_number TEXT NOT NULL,
@@ -235,7 +291,7 @@ function loadDb(): Promise<Database> {
         cashier_name TEXT NOT NULL,
         created_at TEXT NOT NULL
       )`)
-      await db.execute(`CREATE TABLE IF NOT EXISTS credit_note_items (
+        await db.execute(`CREATE TABLE IF NOT EXISTS credit_note_items (
         id TEXT PRIMARY KEY,
         credit_note_id TEXT NOT NULL REFERENCES credit_notes(id),
         product_id TEXT NOT NULL,
@@ -245,8 +301,8 @@ function loadDb(): Promise<Database> {
         unit_price REAL NOT NULL,
         total_price REAL NOT NULL
       )`)
-      // Workers Payroll & Attendance tables (see src/types/payroll.ts).
-      await db.execute(`
+        // Workers Payroll & Attendance tables (see src/types/payroll.ts).
+        await db.execute(`
         CREATE TABLE IF NOT EXISTS workers (
           id TEXT PRIMARY KEY,
           name TEXT NOT NULL,
@@ -256,7 +312,7 @@ function loadDb(): Promise<Database> {
           created_at TEXT NOT NULL
         )
       `)
-      await db.execute(`
+        await db.execute(`
         CREATE TABLE IF NOT EXISTS worker_attendance (
           id TEXT PRIMARY KEY,
           worker_id TEXT NOT NULL REFERENCES workers(id) ON DELETE CASCADE,
@@ -268,7 +324,7 @@ function loadDb(): Promise<Database> {
           UNIQUE (worker_id, date)
         )
       `)
-      await db.execute(`
+        await db.execute(`
         CREATE TABLE IF NOT EXISTS worker_advances (
           id TEXT PRIMARY KEY,
           worker_id TEXT NOT NULL REFERENCES workers(id) ON DELETE CASCADE,
@@ -278,10 +334,10 @@ function loadDb(): Promise<Database> {
           created_at TEXT NOT NULL
         )
       `)
-      // Finalized monthly salary payouts (see SalaryPaymentRecord).
-      // UNIQUE (worker_id, month_year) enforces one payout per worker/month,
-      // mirroring the isSalaryPaid() lifecycle enforced in the payroll store.
-      await db.execute(`
+        // Finalized monthly salary payouts (see SalaryPaymentRecord).
+        // UNIQUE (worker_id, month_year) enforces one payout per worker/month,
+        // mirroring the isSalaryPaid() lifecycle enforced in the payroll store.
+        await db.execute(`
         CREATE TABLE IF NOT EXISTS salary_payments (
           id TEXT PRIMARY KEY,
           worker_id TEXT NOT NULL REFERENCES workers(id) ON DELETE CASCADE,
@@ -295,9 +351,9 @@ function loadDb(): Promise<Database> {
           UNIQUE (worker_id, month_year)
         )
       `)
-      // Operating expense log — salary payouts are recorded here so that net
-      // profits in reports reflect employee wages.
-      await db.execute(`
+        // Operating expense log — salary payouts are recorded here so that net
+        // profits in reports reflect employee wages.
+        await db.execute(`
         CREATE TABLE IF NOT EXISTS operating_expenses (
           id TEXT PRIMARY KEY,
           expense_date TEXT NOT NULL,
@@ -307,42 +363,76 @@ function loadDb(): Promise<Database> {
           created_at TEXT NOT NULL
         )
       `)
-      await db.execute(
-        'CREATE INDEX IF NOT EXISTS idx_sale_items_sale_id ON sale_items(sale_id)'
-      )
-      await db.execute(
-        'CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)'
-      )
-      // Query-plan indexes: sales-history date scans, SKU/barcode lookups
-      // from the POS search and scanner, and credit-note item joins.
-      await db.execute(
-        'CREATE INDEX IF NOT EXISTS idx_sales_created_at ON sales(created_at)'
-      )
-      await db.execute(
-        'CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku)'
-      )
-      await db.execute(
-        'CREATE INDEX IF NOT EXISTS idx_credit_notes_created_at ON credit_notes(created_at)'
-      )
-      await db.execute(
-        'CREATE INDEX IF NOT EXISTS idx_credit_note_items_note_id ON credit_note_items(credit_note_id)'
-      )
-      await db.execute(
-        'CREATE INDEX IF NOT EXISTS idx_sale_items_product_id ON sale_items(product_id)'
-      )
-      // Foreign-key / relation indexes for the payroll tables (cascaded deletes
-      // and per-worker history lookups benefit from them).
-      await db.execute(
-        'CREATE INDEX IF NOT EXISTS idx_worker_attendance_worker_id ON worker_attendance(worker_id)'
-      )
-      await db.execute(
-        'CREATE INDEX IF NOT EXISTS idx_worker_advances_worker_id ON worker_advances(worker_id)'
-      )
-      // Returns query a credit note by its originating invoice.
-      await db.execute(
-        'CREATE INDEX IF NOT EXISTS idx_credit_notes_original_sale_id ON credit_notes(original_sale_id)'
-      )
-      await db.execute(`CREATE TABLE IF NOT EXISTS license (
+        // Customer Debt & Credit Management (see src/types/customer.ts).
+        // `current_balance` is the running debt the customer owes (positive).
+        await db.execute(`
+        CREATE TABLE IF NOT EXISTS customers (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          phone TEXT NOT NULL DEFAULT '',
+          address TEXT NOT NULL DEFAULT '',
+          current_balance REAL NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL
+        )
+      `)
+        // Immutable audit log: every balance movement is appended, never edited.
+        // `type` is 'SALE_CREDIT' | 'PAYMENT' | 'MANUAL_ADJUSTMENT'; `amount` is
+        // always positive, and `previous_balance`/`new_balance` are snapshots.
+        await db.execute(`
+        CREATE TABLE IF NOT EXISTS customer_ledger (
+          id TEXT PRIMARY KEY,
+          customer_id TEXT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+          type TEXT NOT NULL,
+          amount REAL NOT NULL,
+          previous_balance REAL NOT NULL,
+          new_balance REAL NOT NULL,
+          reference_id TEXT,
+          notes TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL
+        )
+      `)
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_customer_ledger_customer_id ON customer_ledger(customer_id)'
+        )
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_customer_ledger_created_at ON customer_ledger(created_at)'
+        )
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_sale_items_sale_id ON sale_items(sale_id)'
+        )
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)'
+        )
+        // Query-plan indexes: sales-history date scans, SKU/barcode lookups
+        // from the POS search and scanner, and credit-note item joins.
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_sales_created_at ON sales(created_at)'
+        )
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku)'
+        )
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_credit_notes_created_at ON credit_notes(created_at)'
+        )
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_credit_note_items_note_id ON credit_note_items(credit_note_id)'
+        )
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_sale_items_product_id ON sale_items(product_id)'
+        )
+        // Foreign-key / relation indexes for the payroll tables (cascaded deletes
+        // and per-worker history lookups benefit from them).
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_worker_attendance_worker_id ON worker_attendance(worker_id)'
+        )
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_worker_advances_worker_id ON worker_advances(worker_id)'
+        )
+        // Returns query a credit note by its originating invoice.
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_credit_notes_original_sale_id ON credit_notes(original_sale_id)'
+        )
+        await db.execute(`CREATE TABLE IF NOT EXISTS license (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         license_key TEXT,
         status TEXT NOT NULL DEFAULT 'UNREGISTERED',
@@ -353,9 +443,9 @@ function loadDb(): Promise<Database> {
         trial_expiration_date TEXT,
         last_active_time TEXT
       )`)
-      // Authentication accounts (see src/types/auth.ts). Passwords are stored
-      // as PBKDF2-SHA256 hashes produced by src/services/password-crypto.ts.
-      await db.execute(`
+        // Authentication accounts (see src/types/auth.ts). Passwords are stored
+        // as PBKDF2-SHA256 hashes produced by src/services/password-crypto.ts.
+        await db.execute(`
         CREATE TABLE IF NOT EXISTS auth_users (
           id TEXT PRIMARY KEY,
           username TEXT NOT NULL UNIQUE,
@@ -366,39 +456,39 @@ function loadDb(): Promise<Database> {
           updated_at TEXT NOT NULL
         )
       `)
-      // Lightweight migration for databases created before the unit column existed.
-      await db
-        .execute('ALTER TABLE products ADD COLUMN unit TEXT')
-        .catch(() => {
-          // Column already exists — nothing to do.
-        })
-      await db
-        .execute('ALTER TABLE products ADD COLUMN units_per_carton INTEGER')
-        .catch(() => {
-          // Column already exists — nothing to do.
-        })
-      for (const [column, definition] of [
-        ['carton_quantity', 'INTEGER NOT NULL DEFAULT 0'],
-        ['box_quantity', 'INTEGER NOT NULL DEFAULT 0'],
-        ['boxes_per_carton', 'INTEGER NOT NULL DEFAULT 1'],
-        ['carton_selling_price', 'REAL NOT NULL DEFAULT 0'],
-        ['box_selling_price', 'REAL NOT NULL DEFAULT 0'],
-        ['carton_purchase_price', 'REAL NOT NULL DEFAULT 0'],
-        ['box_purchase_price', 'REAL NOT NULL DEFAULT 0'],
-      ]) {
+        // Lightweight migration for databases created before the unit column existed.
         await db
-          .execute(`ALTER TABLE products ADD COLUMN ${column} ${definition}`)
+          .execute('ALTER TABLE products ADD COLUMN unit TEXT')
           .catch(() => {
-            // Column already exists.
+            // Column already exists — nothing to do.
           })
-      }
-      await db.execute(`
+        await db
+          .execute('ALTER TABLE products ADD COLUMN units_per_carton INTEGER')
+          .catch(() => {
+            // Column already exists — nothing to do.
+          })
+        for (const [column, definition] of [
+          ['carton_quantity', 'INTEGER NOT NULL DEFAULT 0'],
+          ['box_quantity', 'INTEGER NOT NULL DEFAULT 0'],
+          ['boxes_per_carton', 'INTEGER NOT NULL DEFAULT 1'],
+          ['carton_selling_price', 'REAL NOT NULL DEFAULT 0'],
+          ['box_selling_price', 'REAL NOT NULL DEFAULT 0'],
+          ['carton_purchase_price', 'REAL NOT NULL DEFAULT 0'],
+          ['box_purchase_price', 'REAL NOT NULL DEFAULT 0'],
+        ]) {
+          await db
+            .execute(`ALTER TABLE products ADD COLUMN ${column} ${definition}`)
+            .catch(() => {
+              // Column already exists.
+            })
+        }
+        await db.execute(`
         CREATE TABLE IF NOT EXISTS schema_migrations (
           id TEXT PRIMARY KEY,
           applied_at TEXT NOT NULL
         )
       `)
-      await db.execute(`
+        await db.execute(`
           UPDATE products
           SET boxes_per_carton = CASE
                 WHEN units_per_carton IS NOT NULL AND units_per_carton > 0 THEN units_per_carton
@@ -452,90 +542,103 @@ function loadDb(): Promise<Database> {
             SELECT 1 FROM schema_migrations WHERE id = 'dual_unit_inventory_v1'
           )
         `)
-      await db.execute(
-        'INSERT OR IGNORE INTO schema_migrations (id, applied_at) VALUES ($1, $2)',
-        ['dual_unit_inventory_v1', new Date().toISOString()]
-      )
-      // Unit management was simplified: products without an explicit unit are
-      // counted in pieces, so legacy NULL/blank rows are backfilled once instead
-      // of rendering an "unspecified" unit in the UI.
-      await db
-        .execute(
-          "UPDATE products SET unit = $1 WHERE unit IS NULL OR TRIM(unit) = ''",
-          [DEFAULT_PRODUCT_UNIT]
+        await db.execute(
+          'INSERT OR IGNORE INTO schema_migrations (id, applied_at) VALUES ($1, $2)',
+          ['dual_unit_inventory_v1', new Date().toISOString()]
         )
-        .catch(() => {
-          // Column missing on very old schemas — the ALTER above will add it.
-        })
-      // Barcode support (barcode scanners, see src/hooks/useBarcodeScanner.ts).
-      await db
-        .execute('ALTER TABLE products ADD COLUMN barcode TEXT')
-        .catch(() => {
-          // Column already exists — nothing to do.
-        })
-      await db
-        .execute(
-          'ALTER TABLE sales ADD COLUMN total_profit REAL NOT NULL DEFAULT 0'
-        )
-        .catch(() => {
-          // Column already exists — nothing to do.
-        })
-      await db
-        .execute(
-          'ALTER TABLE sale_items ADD COLUMN purchase_price REAL NOT NULL DEFAULT 0'
-        )
-        .catch(() => {
-          // Column already exists — nothing to do.
-        })
-      await db
-        .execute(
-          'ALTER TABLE sale_items ADD COLUMN profit REAL NOT NULL DEFAULT 0'
-        )
-        .catch(() => {
-          // Column already exists — nothing to do.
-        })
-      await db
-        .execute(
-          "ALTER TABLE sale_items ADD COLUMN unit TEXT NOT NULL DEFAULT 'box'"
-        )
-        .catch(() => {
-          // Column already exists.
-        })
-      // Migration: add sku column to sale_items (added to track item SKU on receipts).
-      await db
-        .execute(
-          "ALTER TABLE sale_items ADD COLUMN sku TEXT NOT NULL DEFAULT ''"
-        )
-        .catch(() => {
-          // Column already exists — nothing to do.
-        })
-      // Migration: add subtotal and tax columns to sales (for accurate receipt reprints).
-      await db
-        .execute(
-          'ALTER TABLE sales ADD COLUMN subtotal REAL NOT NULL DEFAULT 0'
-        )
-        .catch(() => {
-          // Column already exists — nothing to do.
-        })
-      await db
-        .execute('ALTER TABLE sales ADD COLUMN tax REAL NOT NULL DEFAULT 0')
-        .catch(() => {
-          // Column already exists — nothing to do.
-        })
-      // Migrations for trial-period columns added to the license table later.
-      for (const column of [
-        'first_run_date',
-        'trial_expiration_date',
-        'last_active_time',
-      ]) {
+        // Unit management was simplified: products without an explicit unit are
+        // counted in pieces, so legacy NULL/blank rows are backfilled once instead
+        // of rendering an "unspecified" unit in the UI.
         await db
-          .execute(`ALTER TABLE license ADD COLUMN ${column} TEXT`)
+          .execute(
+            "UPDATE products SET unit = $1 WHERE unit IS NULL OR TRIM(unit) = ''",
+            [DEFAULT_PRODUCT_UNIT]
+          )
+          .catch(() => {
+            // Column missing on very old schemas — the ALTER above will add it.
+          })
+        // Barcode support (barcode scanners, see src/hooks/useBarcodeScanner.ts).
+        await db
+          .execute('ALTER TABLE products ADD COLUMN barcode TEXT')
           .catch(() => {
             // Column already exists — nothing to do.
           })
-      }
-      return db
-    })
+        await db
+          .execute(
+            'ALTER TABLE sales ADD COLUMN total_profit REAL NOT NULL DEFAULT 0'
+          )
+          .catch(() => {
+            // Column already exists — nothing to do.
+          })
+        await db
+          .execute(
+            'ALTER TABLE sale_items ADD COLUMN purchase_price REAL NOT NULL DEFAULT 0'
+          )
+          .catch(() => {
+            // Column already exists — nothing to do.
+          })
+        await db
+          .execute(
+            'ALTER TABLE sale_items ADD COLUMN profit REAL NOT NULL DEFAULT 0'
+          )
+          .catch(() => {
+            // Column already exists — nothing to do.
+          })
+        await db
+          .execute(
+            "ALTER TABLE sale_items ADD COLUMN unit TEXT NOT NULL DEFAULT 'box'"
+          )
+          .catch(() => {
+            // Column already exists.
+          })
+        // Migration: add sku column to sale_items (added to track item SKU on receipts).
+        await db
+          .execute(
+            "ALTER TABLE sale_items ADD COLUMN sku TEXT NOT NULL DEFAULT ''"
+          )
+          .catch(() => {
+            // Column already exists — nothing to do.
+          })
+        // Migration: add subtotal and tax columns to sales (for accurate receipt reprints).
+        await db
+          .execute(
+            'ALTER TABLE sales ADD COLUMN subtotal REAL NOT NULL DEFAULT 0'
+          )
+          .catch(() => {
+            // Column already exists — nothing to do.
+          })
+        await db
+          .execute('ALTER TABLE sales ADD COLUMN tax REAL NOT NULL DEFAULT 0')
+          .catch(() => {
+            // Column already exists — nothing to do.
+          })
+        // Migration: credit-checkout linkage + settlement snapshot on sales.
+        for (const [column, definition] of [
+          ['customer_id', 'TEXT'],
+          ['customer_name', 'TEXT'],
+          ['payment_type', "TEXT NOT NULL DEFAULT 'CASH'"],
+          ['paid_amount', 'REAL NOT NULL DEFAULT 0'],
+        ]) {
+          await db
+            .execute(`ALTER TABLE sales ADD COLUMN ${column} ${definition}`)
+            .catch(() => {
+              // Column already exists — nothing to do.
+            })
+        }
+        // Migrations for trial-period columns added to the license table later.
+        for (const column of [
+          'first_run_date',
+          'trial_expiration_date',
+          'last_active_time',
+        ]) {
+          await db
+            .execute(`ALTER TABLE license ADD COLUMN ${column} TEXT`)
+            .catch(() => {
+              // Column already exists — nothing to do.
+            })
+        }
+        return db
+      })
     // Allow a retry after a failed startup instead of caching a rejected promise.
     dbPromise.catch(() => {
       dbPromise = null
@@ -959,6 +1062,10 @@ interface SaleRow {
   total_amount: number
   total_profit: number
   cashier_name: string
+  customer_id: string | null
+  customer_name: string | null
+  payment_type: string | null
+  paid_amount: number | null
   created_at: string
 }
 
@@ -1188,7 +1295,7 @@ export async function persistSaleAtomic(
   try {
     await withTransaction(async db => {
       await db.execute(
-        'INSERT INTO sales (id, invoice_number, subtotal, tax, total_amount, total_profit, cashier_name, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+        'INSERT INTO sales (id, invoice_number, subtotal, tax, total_amount, total_profit, cashier_name, customer_id, customer_name, payment_type, paid_amount, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)',
         [
           sale.id,
           sale.invoiceNumber,
@@ -1197,6 +1304,10 @@ export async function persistSaleAtomic(
           sale.total,
           sale.totalProfit ?? 0,
           sale.cashierId,
+          sale.customerId ?? null,
+          sale.customerName ?? null,
+          sale.paymentType ?? 'CASH',
+          sale.paidAmount ?? sale.total,
           sale.createdAt,
         ]
       )
@@ -1286,7 +1397,7 @@ export async function persistSaleAtomic(
 export async function fetchSales(range?: TimeRange): Promise<Sale[]> {
   const db = await getDb()
   const saleRows = await db.select<SaleRow[]>(
-    `SELECT id, invoice_number, subtotal, tax, total_amount, total_profit, cashier_name, created_at FROM sales ${range ? 'WHERE created_at >= $1' : ''} ORDER BY created_at DESC`,
+    `SELECT id, invoice_number, subtotal, tax, total_amount, total_profit, cashier_name, customer_id, customer_name, payment_type, paid_amount, created_at FROM sales ${range ? 'WHERE created_at >= $1' : ''} ORDER BY created_at DESC`,
     range ? [cutoffForRange(range)] : []
   )
   if (saleRows.length === 0) return []
@@ -1325,6 +1436,10 @@ export async function fetchSales(range?: TimeRange): Promise<Sale[]> {
     totalProfit: row.total_profit,
     cashierId: row.cashier_name,
     createdAt: row.created_at,
+    customerId: row.customer_id ?? undefined,
+    customerName: row.customer_name ?? undefined,
+    paymentType: row.payment_type === 'CREDIT' ? 'CREDIT' : 'CASH',
+    paidAmount: row.paid_amount ?? row.total_amount,
   }))
 }
 
@@ -1908,16 +2023,213 @@ export async function updateAuthUserPassword(
 /* Analytics — product performance & dead-stock reports                */
 /* ------------------------------------------------------------------ */
 
+/** Sales count at/below which a product is treated as dead stock (mirrors SQL). */
+const DEAD_STOCK_SALES_THRESHOLD = 3
+
+/** Maximum number of highest-margin products reported (mirrors the SQL LIMIT). */
+const HIGHEST_MARGIN_LIMIT = 20
+
+/**
+ * Browser / offline analytics fallback.
+ *
+ * Inside the desktop runtime the SQLite queries below are authoritative. In the
+ * browser dev server (and in unit tests) there is no database, so the same
+ * reports are derived from the live Zustand state instead of rendering blank
+ * screens — the dashboard stays fully functional without a Tauri backend.
+ *
+ * The stores import this module back, so they are pulled in dynamically at
+ * call time; a static import would create a load-order cycle that leaves one of
+ * the two modules half-initialised.
+ */
+interface LocalAnalyticsState {
+  products: Product[]
+  sales: Sale[]
+}
+
+/**
+ * Memoized store loader.
+ *
+ * The two store modules are imported **once per db-module lifetime** (and
+ * sequentially, never in parallel): `fetchFullAnalytics` fans out to four
+ * reporting functions that each need the stores, and firing concurrent
+ * dynamic imports at the module registry races with `vi.resetModules()` in
+ * unit tests — which then resolves the *real* store instead of the test double.
+ * Importing sequentially behind a cache keeps that deterministic while saving
+ * redundant work in production.
+ */
+interface LocalStores {
+  useInventoryStore: { getState: () => { products: Product[] } }
+  useSalesStore: { getState: () => { sales: Sale[] } }
+}
+
+let localStoresPromise: Promise<LocalStores> | null = null
+
+function loadLocalStores(): Promise<LocalStores> {
+  if (!localStoresPromise) {
+    localStoresPromise = (async () => {
+      const { useInventoryStore } = await import('@/store/useInventoryStore')
+      const { useSalesStore } = await import('@/store/useSalesStore')
+      return { useInventoryStore, useSalesStore }
+    })()
+    // Allow a retry after a failed import instead of caching a rejection.
+    localStoresPromise.catch(() => {
+      localStoresPromise = null
+    })
+  }
+  return localStoresPromise
+}
+
+async function readLocalAnalyticsState(): Promise<LocalAnalyticsState> {
+  try {
+    const { useInventoryStore, useSalesStore } = await loadLocalStores()
+    return {
+      products: useInventoryStore.getState().products,
+      sales: useSalesStore.getState().sales,
+    }
+  } catch (error) {
+    logger.warn('Local analytics fallback unavailable', {
+      error: String(error),
+    })
+    return { products: [], sales: [] }
+  }
+}
+
+/** Keeps only the sales whose `createdAt` falls inside `range`. */
+function salesWithinRange(sales: Sale[], range: TimeRange): Sale[] {
+  const cutoff = Date.parse(cutoffForRange(range))
+  return sales.filter(sale => Date.parse(sale.createdAt) >= cutoff)
+}
+
+/** Per-product performance aggregated from store-backed sales. */
+function buildLocalProductAnalytics(sales: Sale[]): ProductAnalyticsItem[] {
+  const byProduct = new Map<string, ProductAnalyticsItem>()
+
+  for (const sale of sales) {
+    for (const item of sale.items) {
+      const current = byProduct.get(item.productId) ?? {
+        productId: item.productId,
+        productName: item.name,
+        totalQuantitySold: 0,
+        totalRevenue: 0,
+        totalProfit: 0,
+        profitMargin: 0,
+      }
+      current.totalQuantitySold += item.quantity
+      current.totalRevenue = roundMoney(current.totalRevenue + item.lineTotal)
+      current.totalProfit = roundMoney(current.totalProfit + (item.profit ?? 0))
+      byProduct.set(item.productId, current)
+    }
+  }
+
+  return [...byProduct.values()]
+    .map(entry => ({
+      ...entry,
+      profitMargin:
+        entry.totalRevenue > 0
+          ? Math.round((entry.totalProfit / entry.totalRevenue) * 1000) / 10
+          : 0,
+    }))
+    .sort((a, b) => b.totalProfit - a.totalProfit)
+}
+/** Units sold per product id across the given sales. */
+function unitsSoldByProduct(sales: Sale[]): Map<string, number> {
+  const sold = new Map<string, number>()
+  for (const sale of sales) {
+    for (const item of sale.items) {
+      sold.set(item.productId, (sold.get(item.productId) ?? 0) + item.quantity)
+    }
+  }
+  return sold
+}
+
+/** Dead / slow-moving stock derived from the in-memory product list. */
+function buildLocalDeadStock(
+  products: Product[],
+  sales: Sale[]
+): DeadStockItem[] {
+  const sold = unitsSoldByProduct(sales)
+  return products
+    .map(product => {
+      const quantitySold = sold.get(product.id) ?? 0
+      return {
+        productId: product.id,
+        productName: product.name,
+        sku: product.sku,
+        category: product.category,
+        quantity: product.quantity,
+        purchasePrice: product.purchasePrice,
+        tiedUpCapital: roundMoney(product.quantity * product.purchasePrice),
+        quantitySold,
+      }
+    })
+    .filter(item => item.quantitySold < DEAD_STOCK_SALES_THRESHOLD)
+    .sort((a, b) => b.tiedUpCapital - a.tiedUpCapital)
+}
+
+/** Products ranked by margin percentage, highest first. */
+function buildLocalHighestMargins(products: Product[]): HighestMarginItem[] {
+  return products
+    .filter(product => product.sellingPrice > 0)
+    .map(product => ({
+      productId: product.id,
+      productName: product.name,
+      sku: product.sku,
+      category: product.category,
+      purchasePrice: product.purchasePrice,
+      sellingPrice: product.sellingPrice,
+      profitMarginPercent:
+        Math.round(
+          ((product.sellingPrice - product.purchasePrice) /
+            product.sellingPrice) *
+            1000
+        ) / 10,
+    }))
+    .sort((a, b) => b.profitMarginPercent - a.profitMarginPercent)
+    .slice(0, HIGHEST_MARGIN_LIMIT)
+}
+
+/** KPI summary (sales totals + dead-stock capital) from store data. */
+function buildLocalAnalyticsSummary(
+  products: Product[],
+  sales: Sale[]
+): AnalyticsSummary {
+  const sold = unitsSoldByProduct(sales)
+  let totalUnitsSold = 0
+  let totalRevenue = 0
+  let totalProfit = 0
+
+  for (const sale of sales) {
+    for (const item of sale.items) {
+      totalUnitsSold += item.quantity
+      totalRevenue = roundMoney(totalRevenue + item.lineTotal)
+      totalProfit = roundMoney(totalProfit + (item.profit ?? 0))
+    }
+  }
+
+  const deadStockValue = products
+    .filter(product => (sold.get(product.id) ?? 0) < DEAD_STOCK_SALES_THRESHOLD)
+    .reduce(
+      (sum, product) =>
+        roundMoney(sum + product.quantity * product.purchasePrice),
+      0
+    )
+
+  return { totalUnitsSold, totalRevenue, totalProfit, deadStockValue }
+}
 /**
  * يجلب بيانات تحليلات المنتجات المجمعة من جدول المبيعات خلال فترة زمنية محددة.
  *
  * يعرض لكل منتج: الكمية المباعة، الإجمالي، الأرباح، وهامش الربح.
- * يُرجع بيانات فارغة عند عدم التشغيل داخل بيئة تاوري (وضع المتصفح).
+ * يحسب القيم من متجر الحالة عند عدم التشغيل داخل بيئة تاوري (وضع المتصفح).
  */
 export async function fetchProductAnalytics(
   range: TimeRange
 ): Promise<ProductAnalyticsItem[]> {
-  if (!isTauriRuntime()) return []
+  // Browser/offline: derive the report from the in-memory stores.
+  if (!isTauriRuntime()) {
+    const { sales } = await readLocalAnalyticsState()
+    return buildLocalProductAnalytics(salesWithinRange(sales, range))
+  }
 
   try {
     const db = await getDb()
@@ -1966,11 +2278,16 @@ export async function fetchProductAnalytics(
  * يعرض المنتجات التي لم تُباع أو بيعت بكميات قليلة جداً خلال الفترة،
  * مع حساب رأس المال المجمّد (الكمية × سعر الشراء) لمساعدة المدير
  * في اتخاذ قرار تصفية المخزون.
+ * يحسب القيم من متجر الحالة عند عدم التشغيل داخل بيئة تاوري (وضع المتصفح).
  */
 export async function fetchDeadStockAnalytics(
   range: TimeRange
 ): Promise<DeadStockItem[]> {
-  if (!isTauriRuntime()) return []
+  // Browser/offline: derive the report from the in-memory stores.
+  if (!isTauriRuntime()) {
+    const { products, sales } = await readLocalAnalyticsState()
+    return buildLocalDeadStock(products, salesWithinRange(sales, range))
+  }
 
   try {
     const db = await getDb()
@@ -2022,11 +2339,16 @@ export async function fetchDeadStockAnalytics(
  * يجلب المنتجات مرتبة حسب أعلى هامش ربح بالنسبة المئوية.
  *
  * يحسب الهامش: ((سعر البيع - سعر الشراء) / سعر البيع) × 100
+ * يحسب القيم من متجر الحالة عند عدم التشغيل داخل بيئة تاوري (وضع المتصفح).
  */
 export async function fetchHighestMarginProducts(): Promise<
   HighestMarginItem[]
 > {
-  if (!isTauriRuntime()) return []
+  // Browser/offline: derive the ranking from the in-memory product list.
+  if (!isTauriRuntime()) {
+    const { products } = await readLocalAnalyticsState()
+    return buildLocalHighestMargins(products)
+  }
 
   try {
     const db = await getDb()
@@ -2080,11 +2402,16 @@ const EMPTY_ANALYTICS_SUMMARY: AnalyticsSummary = {
  * يجلب ملخص المؤشرات الرئيسية (KPIs) للوحة التحليلات.
  *
  * يشمل: إجمالي القطع المباعة، الإيرادات، الأرباح، وقيمة الرواكد.
+ * يحسب القيم من متجر الحالة عند عدم التشغيل داخل بيئة تاوري (وضع المتصفح).
  */
 export async function fetchAnalyticsSummary(
   range: TimeRange
 ): Promise<AnalyticsSummary> {
-  if (!isTauriRuntime()) return EMPTY_ANALYTICS_SUMMARY
+  // Browser/offline: derive the KPIs from the in-memory stores.
+  if (!isTauriRuntime()) {
+    const { products, sales } = await readLocalAnalyticsState()
+    return buildLocalAnalyticsSummary(products, salesWithinRange(sales, range))
+  }
 
   try {
     const db = await getDb()
@@ -2156,4 +2483,167 @@ export async function fetchFullAnalytics(
     deadStock,
     highestMargins,
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Customer Debt & Credit persistence (see src/types/customer.ts)      */
+/* ------------------------------------------------------------------ */
+
+interface CustomerRow {
+  id: string
+  name: string
+  phone: string
+  address: string
+  current_balance: number
+  created_at: string
+}
+
+interface CustomerLedgerRow {
+  id: string
+  customer_id: string
+  type: string
+  amount: number
+  previous_balance: number
+  new_balance: number
+  reference_id: string | null
+  notes: string
+  created_at: string
+}
+
+function toCustomer(row: CustomerRow): Customer {
+  return {
+    id: row.id,
+    name: row.name,
+    phone: row.phone ?? '',
+    address: row.address ?? '',
+    currentBalance: Number(row.current_balance) || 0,
+    createdAt: row.created_at,
+  }
+}
+
+function toCustomerLedgerEntry(row: CustomerLedgerRow): CustomerLedgerEntry {
+  return {
+    id: row.id,
+    customerId: row.customer_id,
+    type: (row.type as CustomerLedgerType) ?? 'MANUAL_ADJUSTMENT',
+    amount: Number(row.amount) || 0,
+    previousBalance: Number(row.previous_balance) || 0,
+    newBalance: Number(row.new_balance) || 0,
+    referenceId: row.reference_id,
+    notes: row.notes ?? '',
+    createdAt: row.created_at,
+  }
+}
+
+/** Loads every customer profile, ordered by name. */
+export async function fetchCustomers(): Promise<Customer[]> {
+  const db = await getDb()
+  const rows = await db.select<CustomerRow[]>(
+    'SELECT id, name, phone, address, current_balance, created_at FROM customers ORDER BY name'
+  )
+  return rows.map(toCustomer)
+}
+
+/** Inserts or updates a customer profile (id is the key). */
+export async function persistCustomer(customer: Customer): Promise<void> {
+  const db = await getDb()
+  await db.execute(
+    'INSERT OR REPLACE INTO customers (id, name, phone, address, current_balance, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
+    [
+      customer.id,
+      customer.name,
+      customer.phone,
+      customer.address,
+      customer.currentBalance,
+      customer.createdAt,
+    ]
+  )
+}
+
+/**
+ * Removes a customer and their ledger rows in ONE transaction. The cascade is
+ * explicit (rather than relying on `ON DELETE CASCADE`, which SQLite only
+ * enforces when `PRAGMA foreign_keys = ON`).
+ */
+export async function deleteCustomerRow(id: string): Promise<void> {
+  await withTransaction(async db => {
+    await db.execute('DELETE FROM customer_ledger WHERE customer_id = $1', [id])
+    await db.execute('DELETE FROM customers WHERE id = $1', [id])
+  })
+}
+
+/** Loads a customer's ledger chronologically (oldest movement first). */
+export async function fetchCustomerLedger(
+  customerId: string
+): Promise<CustomerLedgerEntry[]> {
+  const db = await getDb()
+  const rows = await db.select<CustomerLedgerRow[]>(
+    'SELECT id, customer_id, type, amount, previous_balance, new_balance, reference_id, notes, created_at FROM customer_ledger WHERE customer_id = $1 ORDER BY created_at ASC',
+    [String(customerId)]
+  )
+  return rows.map(toCustomerLedgerEntry)
+}
+
+/**
+ * Applies ONE ledger movement on the given (already-open) transaction handle:
+ * reads the current balance, writes the new balance, and appends the immutable
+ * audit row. `SALE_CREDIT` / `MANUAL_ADJUSTMENT` increase the debt; `PAYMENT`
+ * decreases it. Returns the applied entry with its computed balances.
+ */
+async function writeCustomerLedgerEntry(
+  db: Database,
+  input: CustomerLedgerInput
+): Promise<CustomerLedgerEntry> {
+  const rows = await db.select<{ current_balance: number }[]>(
+    'SELECT current_balance FROM customers WHERE id = $1',
+    [String(input.customerId)]
+  )
+  if (rows.length === 0) {
+    throw new Error(`customer-ledger: customer not found (${input.customerId})`)
+  }
+  const amount = roundMoney(Math.abs(input.amount))
+  const previous = roundMoney(Number(rows[0]?.current_balance) || 0)
+  const delta = input.type === 'PAYMENT' ? -amount : amount
+  const newBalance = roundMoney(previous + delta)
+
+  await db.execute('UPDATE customers SET current_balance = $1 WHERE id = $2', [
+    newBalance,
+    String(input.customerId),
+  ])
+  await db.execute(
+    'INSERT INTO customer_ledger (id, customer_id, type, amount, previous_balance, new_balance, reference_id, notes, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+    [
+      input.id,
+      String(input.customerId),
+      input.type,
+      amount,
+      previous,
+      newBalance,
+      input.referenceId,
+      input.notes,
+      input.createdAt,
+    ]
+  )
+  return {
+    id: input.id,
+    customerId: String(input.customerId),
+    type: input.type,
+    amount,
+    previousBalance: previous,
+    newBalance,
+    referenceId: input.referenceId,
+    notes: input.notes,
+    createdAt: input.createdAt,
+  }
+}
+
+/**
+ * Atomically applies a debt movement: the balance update and the ledger insert
+ * commit in ONE transaction, so the audit log and the running balance can never
+ * diverge. Returns the applied entry (with its computed previous/new balances).
+ */
+export async function applyCustomerLedgerEntry(
+  input: CustomerLedgerInput
+): Promise<CustomerLedgerEntry> {
+  return withTransaction(db => writeCustomerLedgerEntry(db, input))
 }

@@ -17,6 +17,26 @@ vi.mock('@tauri-apps/plugin-sql', () => ({
   default: { load: dbMocks.load },
 }))
 
+/**
+ * Controllable Zustand state for the browser/offline analytics fallback.
+ *
+ * `fetchProductAnalytics` & friends read these stores when the desktop runtime
+ * is unavailable, so the tests drive the fallback deterministically instead of
+ * relying on the real seeded stores.
+ */
+const storeState = vi.hoisted(() => ({
+  products: [] as Record<string, unknown>[],
+  sales: [] as Record<string, unknown>[],
+}))
+
+vi.mock('@/store/useInventoryStore', () => ({
+  useInventoryStore: { getState: () => ({ products: storeState.products }) },
+}))
+
+vi.mock('@/store/useSalesStore', () => ({
+  useSalesStore: { getState: () => ({ sales: storeState.sales }) },
+}))
+
 /** Marks the jsdom window as the desktop runtime (or clears the marker). */
 function setTauriRuntime(active: boolean): void {
   const target = window as unknown as { __TAURI_INTERNALS__?: unknown }
@@ -70,6 +90,8 @@ describe('db service — SQLite concurrency & analytics resilience', () => {
   afterEach(() => {
     setTauriRuntime(false)
     vi.useRealTimers()
+    storeState.products = []
+    storeState.sales = []
   })
 
   it('enables WAL, a 5s busy timeout and NORMAL sync before creating the schema', async () => {
@@ -127,13 +149,90 @@ describe('db service — SQLite concurrency & analytics resilience', () => {
     )
   })
 
-  it('returns empty analytics outside the desktop runtime', async () => {
+  it('returns empty analytics outside the desktop runtime when the stores are empty', async () => {
     setTauriRuntime(false)
     const db = await importDb()
 
     await expect(db.fetchFullAnalytics('TODAY')).resolves.toEqual(
       EMPTY_ANALYTICS
     )
+    // The browser fallback never touches the SQLite plugin.
+    expect(dbMocks.load).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the in-memory Zustand stores outside the desktop runtime', async () => {
+    setTauriRuntime(false)
+    storeState.products = [
+      {
+        id: 'p1',
+        name: 'Espresso',
+        sku: 'COF-001',
+        category: 'Coffee',
+        quantity: 4,
+        purchasePrice: 2,
+        sellingPrice: 5,
+      },
+    ]
+    storeState.sales = [
+      {
+        id: 's1',
+        createdAt: new Date().toISOString(),
+        items: [
+          {
+            productId: 'p1',
+            name: 'Espresso',
+            sku: 'COF-001',
+            quantity: 2,
+            lineTotal: 10,
+            profit: 6,
+          },
+        ],
+      },
+    ]
+    const db = await importDb()
+
+    await expect(db.fetchProductAnalytics('TODAY')).resolves.toEqual([
+      {
+        productId: 'p1',
+        productName: 'Espresso',
+        totalQuantitySold: 2,
+        totalRevenue: 10,
+        totalProfit: 6,
+        profitMargin: 60,
+      },
+    ])
+    await expect(db.fetchHighestMarginProducts()).resolves.toEqual([
+      {
+        productId: 'p1',
+        productName: 'Espresso',
+        sku: 'COF-001',
+        category: 'Coffee',
+        purchasePrice: 2,
+        sellingPrice: 5,
+        profitMarginPercent: 60,
+      },
+    ])
+    // 2 units sold is below the dead-stock threshold (3), so the product is
+    // reported with its tied-up capital (4 × 2).
+    await expect(db.fetchDeadStockAnalytics('TODAY')).resolves.toEqual([
+      {
+        productId: 'p1',
+        productName: 'Espresso',
+        sku: 'COF-001',
+        category: 'Coffee',
+        quantity: 4,
+        purchasePrice: 2,
+        tiedUpCapital: 8,
+        quantitySold: 2,
+      },
+    ])
+    await expect(db.fetchAnalyticsSummary('TODAY')).resolves.toEqual({
+      totalUnitsSold: 2,
+      totalRevenue: 10,
+      totalProfit: 6,
+      deadStockValue: 8,
+    })
+    // Everything was served from the stores — no database was opened.
     expect(dbMocks.load).not.toHaveBeenCalled()
   })
 

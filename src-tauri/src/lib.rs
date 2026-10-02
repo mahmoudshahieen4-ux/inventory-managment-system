@@ -109,6 +109,29 @@ pub fn run() {
                 app.package_info().name
             );
 
+            // Resolve the per-user, writable app data directory and create it
+            // BEFORE any SQLite connection is opened.
+            //
+            // `tauri-plugin-sql` defaults a relative `sqlite:pos.db` to the app
+            // *config* dir, but the frontend opens an absolute path derived from
+            // `appDataDir()` (so the file can never land in a write-protected
+            // install location such as `C:\Program Files`). Creating the
+            // directory here guarantees the first write succeeds even on a
+            // pristine machine.
+            match app.path().app_data_dir() {
+                Ok(dir) => {
+                    if let Err(error) = std::fs::create_dir_all(&dir) {
+                        log::error!(
+                            "Failed to create app data directory {}: {error}",
+                            dir.display()
+                        );
+                    } else {
+                        log::info!("App data directory ready: {}", dir.display());
+                    }
+                }
+                Err(error) => log::error!("Could not resolve app data directory: {error}"),
+            }
+
             // Set up global shortcut plugin (without any shortcuts - we register them separately)
             #[cfg(desktop)]
             {

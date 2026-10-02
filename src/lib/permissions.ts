@@ -4,10 +4,10 @@ import type { UserRole } from '@/types/auth'
 /**
  * Views each role is allowed to open.
  * Cashiers are limited to the POS screen (sales + invoices); every other
- * view (inventory, payroll) is admin-only.
+ * view (inventory, payroll, customers, analytics) is admin-only.
  */
 const ROLE_ALLOWED_VIEWS: Record<UserRole, readonly AppView[]> = {
-  ADMIN: ['inventory', 'pos', 'payroll', 'analytics'],
+  ADMIN: ['inventory', 'pos', 'payroll', 'analytics', 'customers'],
   CASHIER: ['pos'],
 }
 

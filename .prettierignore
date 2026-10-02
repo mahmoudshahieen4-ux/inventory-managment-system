@@ -14,11 +14,15 @@ src-tauri/gen/
 *.config.ts
 vite.config.ts
 
+# Legal text — formatting must not be altered by tooling
+LICENSE.md
+
 # Generated files
 package-lock.json
 pnpm-lock.yaml
 .git/
 src/lib/bindings.ts
+supabase/.temp/
 
 # Logs
 *.log

@@ -2,7 +2,8 @@ import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 
 /** Available views in the main content area. */
-export type AppView = 'inventory' | 'pos' | 'payroll' | 'analytics'
+export type AppView =
+  'inventory' | 'pos' | 'payroll' | 'analytics' | 'customers'
 
 interface UIState {
   leftSidebarVisible: boolean

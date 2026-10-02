@@ -37,6 +37,12 @@ Analytics uses a range-keyed TanStack Query to isolate late responses.
 No schema migration is required. Do not compare UTC ISO timestamps directly
 against SQLite local date strings; the formats and time zones differ.
 
+When the desktop runtime is unavailable (browser dev server, unit tests),
+`fetchFullAnalytics` and its four sub-queries derive the same reports from the
+Zustand stores instead of querying SQLite — see `buildLocalProductAnalytics` &
+friends in `src/services/db.ts`. The Analytics dashboard therefore renders real
+numbers in both environments.
+
 ## File Locations
 
 ```
@@ -184,9 +190,12 @@ if filename.contains("..") || filename.contains("/") || filename.contains("\\") 
 
 Use Tauri's `app_data_dir()` for safe storage locations - never write to arbitrary paths.
 
-## SQLite Database (When Needed)
+## SQLite Database
 
-> **Note:** SQLite is not installed in this app. Add it when your app needs relational data with queries.
+> This app already ships SQLite through `tauri-plugin-sql` (connection opened
+> lazily from `src/services/db.ts`, path resolved into `appDataDir()`). See
+> [production.md](./production.md) for the database location and the required
+> `sql:*` capability permissions. The patterns below cover the general case.
 
 ### When to Use SQLite
 

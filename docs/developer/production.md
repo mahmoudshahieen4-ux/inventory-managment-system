@@ -5,21 +5,28 @@ Checklist and rationale for shipping the desktop POS to end-user machines
 
 ## Local Database Location
 
-- Connection string: `sqlite:pos.db` (`src/services/db.ts`, preloaded in
-  `tauri.conf.json` → `plugins.sql.preload`).
-- `tauri-plugin-sql` resolves relative SQLite paths against the app's
-  **`app_config_dir()`** and creates the directory if missing (verified in the
-  plugin source, `wrapper.rs::DbPool::connect`). On **Windows**
-  `app_config_dir` equals `app_data_dir`:
+- The connection string is resolved **at runtime** to an absolute path inside the
+  per-user app data directory (`src/services/db.ts`, `resolveDatabaseUrl()`):
 
   ```
   %APPDATA%\com.egyptpos.store\pos.db
   C:\Users\<user>\AppData\Roaming\com.egyptpos.store\pos.db
   ```
 
-- That is the stable, per-user, writable location — exactly the required
-  `app_data_dir` behavior on the shipping platform. **Do not** move the file:
-  existing customer data would be orphaned.
+- `appDataDir()` + `join()` (`@tauri-apps/api/path`, granted by
+  `core:path:default`) build the path. `tauri-plugin-sql` maps `sqlite:<path>`
+  through `app_config_dir().push(<path>)`; because the value is **absolute** it
+  replaces that base, so the database is pinned to the writable per-user
+  location and can never land in `C:\Program Files`.
+- `src-tauri/src/lib.rs` resolves and **creates** `app_data_dir()` during
+  `setup()`, before any connection opens, so the very first write succeeds on a
+  pristine machine.
+- The SQL plugin is **not** preloaded (`tauri.conf.json` omits `plugins.sql`);
+  the frontend opens the connection lazily through `Database.load()`. If the
+  directory cannot be resolved, the code logs a warning and degrades to the
+  relative `sqlite:pos.db` default (the Windows/macOS config dir) instead of
+  crashing.
+- **Do not** move the file: existing customer data would be orphaned.
 
 ## Accounts & Passwords
 
@@ -59,10 +66,20 @@ Checklist and rationale for shipping the desktop POS to end-user machines
 ## Capabilities (IPC Permissions)
 
 `src-tauri/capabilities/default.json` (main window) grants:
-`core:default`, window controls (minimize/maximize/close/fullscreen/drag),
-`core:event:default`, `log:default`, `process:default`, `os:default`,
-`sql:default` + `sql:allow-execute` (schema DDL needs execute),
-`updater:default`. `desktop.json` adds `window-state:default` + updater.
+`core:default` (plus an explicit `core:path:default`), window controls
+(minimize/maximize/close/fullscreen/drag), `core:event:default`, `log:default`,
+`process:default`, `os:default`, `updater:default`, and the SQL set:
+`sql:default` + `sql:allow-load`, `sql:allow-select`, `sql:allow-execute`,
+`sql:allow-close`. `desktop.json` adds `window-state:default` + updater.
+
+> **Note on `sql:*` identifiers:** `tauri-plugin-sql` 2.x exposes only
+> `allow-load`, `allow-select`, `allow-execute` and `allow-close`. Every
+> INSERT / UPDATE / DELETE runs through the `execute` command, so there are **no**
+> `sql:allow-insert` / `sql:allow-update` / `sql:allow-delete` permissions —
+> listing them fails capability validation during the build. `sql:default`
+> already bundles `allow-load`, `allow-select` and `allow-close`; the explicit
+> entries are kept for readability.
+
 Follow least-privilege: add new plugin permissions explicitly, never `**`.
 
 ## CSP & Cloud Licensing
@@ -89,8 +106,8 @@ license check goes out (Rust-side updater requests are not subject to CSP).
 ## Build & Verify
 
 ```bash
-npx tauri build          # dist + NSIS installer
-# output: src-tauri/target/release/bundle/nsis/PosStoreApp_0.1.1_x64-setup.exe
+pnpm run tauri:build     # dist + NSIS installer
+# output: src-tauri/target/release/bundle/nsis/PosStoreApp_1.0.4_x64-setup.exe
 ```
 
 Verify on a clean Windows VM: install (WebView2 auto-provisioning), first
