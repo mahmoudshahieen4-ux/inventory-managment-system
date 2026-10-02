@@ -45,7 +45,8 @@ describe('ProductFormModal', () => {
 
     expect(screen.getByText('Add New Product')).toBeInTheDocument()
     expect(screen.getByLabelText('Name*')).toHaveValue('')
-    expect(screen.getByLabelText('Category*')).toHaveValue('')
+    expect(screen.getByLabelText('Category')).toHaveValue('')
+    expect(screen.getByLabelText('Category')).not.toHaveAttribute('required')
     expect(screen.getByLabelText('Units per Carton*')).toHaveValue(1)
     expect(
       screen.getByLabelText('Loose Boxes/Pieces in Stock (optional)')
@@ -69,13 +70,27 @@ describe('ProductFormModal', () => {
       screen.getByLabelText('Loose Boxes/Pieces in Stock (optional)')
     ).toHaveValue(0)
     expect(screen.getByLabelText('Units per Carton*')).toHaveValue(12)
-    expect(screen.getByLabelText('Carton Purchase Price*')).toHaveValue('12.5')
+    expect(screen.getByLabelText('Carton Purchase Price')).toHaveValue('12.5')
     expect(
       screen.getByText('Piece purchase cost automatically: 1.04 ج.م')
     ).toBeInTheDocument()
     expect(
       screen.getByText('Carton selling price: 24.99 ج.م')
     ).toBeInTheDocument()
+  })
+
+  it('replaces prefilled prices and removes leading zeroes', async () => {
+    const user = userEvent.setup()
+    renderEditModal(findProduct('prod-001'))
+
+    const purchasePrice = screen.getByLabelText('Carton Purchase Price')
+    const sellingPrice = screen.getByLabelText('Box/Piece Selling Price*')
+
+    await user.type(purchasePrice, '0010.50')
+    await user.type(sellingPrice, '0002.25')
+
+    expect(purchasePrice).toHaveValue('10.50')
+    expect(sellingPrice).toHaveValue('2.25')
   })
 
   it('marks required fields and links error alerts via aria-describedby', async () => {
@@ -99,9 +114,24 @@ describe('ProductFormModal', () => {
     const trigger = screen.getByRole('button', { name: /show more options/i })
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
     expect(trigger).toHaveAttribute('aria-controls')
+    expect(screen.getByLabelText('Name*')).toBeVisible()
+    expect(screen.getByLabelText('Box/Piece Selling Price*')).toBeVisible()
+    expect(screen.getByLabelText('Cartons in Stock*')).toBeVisible()
 
     // Collapsed content is inert: untabbable and hidden from assistive tech.
     expect(collapsibleContent()).toHaveAttribute('inert')
+    for (const label of [
+      'Category',
+      'Carton Purchase Price',
+      'Loose Boxes/Pieces in Stock (optional)',
+      'Units per Carton*',
+    ]) {
+      expect(
+        screen
+          .getByLabelText(label)
+          .closest('[data-slot="collapsible-content"]')
+      ).toHaveAttribute('inert')
+    }
     expect(
       screen
         .getByLabelText('Min Threshold')
@@ -136,11 +166,87 @@ describe('ProductFormModal', () => {
 
     await user.click(screen.getByRole('button', { name: 'Create Product' }))
 
-    expect(screen.getAllByText('This field is required.')).toHaveLength(4)
+    expect(screen.getAllByText('This field is required.')).toHaveLength(2)
     expect(onOpenChangeMock).not.toHaveBeenCalled()
     expect(useInventoryStore.getState().products).toHaveLength(
       initialProducts.length
     )
+  })
+
+  it('allows an empty purchase price and stores it as zero', async () => {
+    const user = userEvent.setup()
+    renderCreateModal()
+
+    await user.type(screen.getByLabelText('Name*'), 'No Cost Product')
+    await user.type(screen.getByLabelText('Box/Piece Selling Price*'), '5')
+
+    expect(screen.getByLabelText('Carton Purchase Price')).not.toHaveAttribute(
+      'required'
+    )
+    expect(
+      screen.getByText(
+        "Optional — leave blank if you don't want to track purchase cost."
+      )
+    ).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Create Product' }))
+
+    const created = useInventoryStore
+      .getState()
+      .products.find(product => product.name === 'No Cost Product')
+    expect(created).toMatchObject({
+      cartonPurchasePrice: 0,
+      boxPurchasePrice: 0,
+      purchasePrice: 0,
+    })
+  })
+
+  it('shows a live purchase price conflict and disables saving', async () => {
+    const user = userEvent.setup()
+    renderCreateModal()
+
+    await user.type(screen.getByLabelText('Name*'), 'Price Conflict Product')
+    await showMoreOptions(user)
+    await user.type(screen.getByLabelText('Carton Purchase Price'), '10')
+    await user.type(screen.getByLabelText('Box/Piece Selling Price*'), '5')
+
+    expect(
+      screen.getByText(
+        'Error: Purchase price cannot be higher than selling price.'
+      )
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Create Product' })
+    ).toBeDisabled()
+
+    fireEvent.change(screen.getByLabelText('Box/Piece Selling Price*'), {
+      target: { value: '15' },
+    })
+
+    expect(
+      screen.queryByText(
+        'Error: Purchase price cannot be higher than selling price.'
+      )
+    ).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Create Product' })).toBeEnabled()
+  })
+
+  it('requires the selling price to be greater than zero', async () => {
+    const user = userEvent.setup()
+    renderCreateModal()
+
+    await user.type(screen.getByLabelText('Name*'), 'Zero Price Product')
+    fireEvent.change(screen.getByLabelText('Box/Piece Selling Price*'), {
+      target: { value: '0' },
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Create Product' }))
+
+    expect(screen.getByText('Must be greater than zero.')).toBeInTheDocument()
+    expect(useInventoryStore.getState().products).toHaveLength(
+      initialProducts.length
+    )
+    expect(onOpenChangeMock).not.toHaveBeenCalled()
   })
 
   it('expands the optional section when a hidden field has an error', async () => {
@@ -148,12 +254,10 @@ describe('ProductFormModal', () => {
     renderCreateModal()
 
     await user.type(screen.getByLabelText('Name*'), 'Duplicate Barcode')
-    await user.type(screen.getByLabelText('Category*'), 'Testing')
     await user.type(
       screen.getByLabelText('Loose Boxes/Pieces in Stock (optional)'),
       '1'
     )
-    await user.type(screen.getByLabelText('Carton Purchase Price*'), '12')
     await user.type(screen.getByLabelText('Box/Piece Selling Price*'), '2')
 
     // prod-001 (Espresso Beans) already owns this barcode.
@@ -180,14 +284,12 @@ describe('ProductFormModal', () => {
     renderCreateModal()
 
     await user.type(screen.getByLabelText('Name*'), 'Test Product')
-    await user.type(screen.getByLabelText('Category*'), 'Testing')
     // type="number" inputs reject the "-" character via keyboard simulation in
     // jsdom; use fireEvent.change to set a negative value the validator can catch.
     fireEvent.change(
       screen.getByLabelText('Loose Boxes/Pieces in Stock (optional)'),
       { target: { value: '-5' } }
     )
-    await user.type(screen.getByLabelText('Carton Purchase Price*'), '12')
     await user.type(screen.getByLabelText('Box/Piece Selling Price*'), '3')
 
     await user.click(screen.getByRole('button', { name: 'Create Product' }))
@@ -204,12 +306,11 @@ describe('ProductFormModal', () => {
     renderCreateModal()
 
     await user.type(screen.getByLabelText('Name*'), 'Olive Oil 1L')
-    await user.type(screen.getByLabelText('Category*'), 'Pantry')
 
     await showMoreOptions(user)
     await user.type(screen.getByLabelText('SKU'), 'OIL-010')
     // Locale-style decimal comma must be parsed as 120.
-    await user.type(screen.getByLabelText('Carton Purchase Price*'), '120,00')
+    await user.type(screen.getByLabelText('Carton Purchase Price'), '120,00')
     await user.type(screen.getByLabelText('Box/Piece Selling Price*'), '20')
     expect(
       screen.getByText('Piece purchase cost automatically: 120.00 ج.م')
@@ -233,7 +334,7 @@ describe('ProductFormModal', () => {
     await user.click(
       screen.getByRole('button', { name: 'Set bulk carton price' })
     )
-    fireEvent.change(screen.getByLabelText('Set bulk carton price'), {
+    fireEvent.change(screen.getByLabelText('Carton Selling Price'), {
       target: { value: '225' },
     })
 
@@ -262,14 +363,13 @@ describe('ProductFormModal', () => {
     renderCreateModal()
 
     await user.type(screen.getByLabelText('Name*'), 'Single Item')
-    await user.type(screen.getByLabelText('Category*'), 'Testing')
     fireEvent.change(screen.getByLabelText('Cartons in Stock*'), {
       target: { value: '1' },
     })
     fireEvent.change(screen.getByLabelText('Units per Carton*'), {
       target: { value: '12' },
     })
-    await user.type(screen.getByLabelText('Carton Purchase Price*'), '24')
+    await user.type(screen.getByLabelText('Carton Purchase Price'), '24')
     await user.type(screen.getByLabelText('Box/Piece Selling Price*'), '3')
     await user.clear(
       screen.getByLabelText('Loose Boxes/Pieces in Stock (optional)')

@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useAutoSelectOnFocus } from '@/hooks/use-auto-select-on-focus'
 import {
   Select,
   SelectContent,
@@ -42,6 +43,11 @@ export function ShipmentReceivingModal({
   product = null,
 }: ShipmentReceivingModalProps) {
   const { t } = useTranslation()
+  const {
+    onFocus: onNumericFocus,
+    onMouseUp: onNumericMouseUp,
+    onWheel,
+  } = useAutoSelectOnFocus()
   const products = useInventoryStore(state => state.products)
   const addShipment = useInventoryStore(state => state.addShipment)
   const [search, setSearch] = useState('')
@@ -247,10 +253,15 @@ export function ShipmentReceivingModal({
                         min={1}
                         step={1}
                         value={row.quantity}
+                        onFocus={onNumericFocus}
+                        onMouseUp={onNumericMouseUp}
+                        onWheel={onWheel}
                         aria-label={t('inventory.shipment.quantity')}
                         onChange={event =>
                           updateRow(row.id, {
-                            quantity: Number(event.target.value),
+                            quantity: Number(
+                              event.target.value.replace(/^0+(?=\d)/, '')
+                            ),
                           })
                         }
                         className="w-24"
@@ -262,10 +273,15 @@ export function ShipmentReceivingModal({
                         min={0}
                         step="0.01"
                         value={row.purchasePrice ?? 0}
+                        onFocus={onNumericFocus}
+                        onMouseUp={onNumericMouseUp}
+                        onWheel={onWheel}
                         aria-label={t('inventory.shipment.purchasePrice')}
                         onChange={event =>
                           updateRow(row.id, {
-                            purchasePrice: Number(event.target.value),
+                            purchasePrice: Number(
+                              event.target.value.replace(/^0+(?=\d)/, '')
+                            ),
                           })
                         }
                         className="w-28"

@@ -187,7 +187,7 @@ export function StockInModal({
   }
 
   const handleQuantityChange = (event: FormEvent<HTMLInputElement>) => {
-    const value = event.currentTarget.value
+    const value = event.currentTarget.value.replace(/^0+(?=\d)/, '')
     setQuantity(value)
     if (value.trim() === '') {
       setQuantityError('')
@@ -204,7 +204,7 @@ export function StockInModal({
   }
 
   const handleCostChange = (event: FormEvent<HTMLInputElement>) => {
-    const value = event.currentTarget.value
+    const value = event.currentTarget.value.replace(/^0+(?=\d)/, '')
     setCostPrice(value)
     if (value.trim() === '') {
       setCostError('')

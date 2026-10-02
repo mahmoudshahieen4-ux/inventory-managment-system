@@ -66,7 +66,6 @@ const EMPTY_VALUES: ProductFormValues = {
 const NUMBER_FIELDS = [
   'cartonQuantity',
   'boxesPerCarton',
-  'cartonPurchasePrice',
   'boxSellingPrice',
 ] as const
 
@@ -122,6 +121,31 @@ function calculateDerivedPrices(values: ProductFormValues) {
   }
 }
 
+function purchasePriceExceedsSellingPrice(values: ProductFormValues): boolean {
+  const cartonPurchasePrice = parseNumber(values.cartonPurchasePrice)
+  const boxSellingPrice = parseNumber(values.boxSellingPrice)
+  const unitsPerCarton = parseNumber(values.boxesPerCarton)
+  if (
+    !Number.isFinite(cartonPurchasePrice) ||
+    cartonPurchasePrice <= 0 ||
+    !Number.isFinite(boxSellingPrice) ||
+    boxSellingPrice <= 0 ||
+    !Number.isFinite(unitsPerCarton) ||
+    unitsPerCarton <= 0
+  ) {
+    return false
+  }
+
+  const derivedPrices = calculateDerivedPrices(values)
+  return (
+    (derivedPrices.boxPurchasePrice !== null &&
+      derivedPrices.boxPurchasePrice > boxSellingPrice) ||
+    (derivedPrices.cartonSellingPrice !== null &&
+      derivedPrices.cartonSellingPrice > 0 &&
+      cartonPurchasePrice > derivedPrices.cartonSellingPrice)
+  )
+}
+
 /**
  * Generates a readable product code that doubles as a scannable barcode.
  * Mirrors the store's `createProductSku()` pattern so codes stay consistent:
@@ -132,7 +156,15 @@ function generateProductCode(): string {
 }
 
 /** Fields that live inside the collapsed "more options" section. */
-const OPTIONAL_ERROR_FIELDS = ['sku', 'barcode', 'minThreshold'] as const
+const OPTIONAL_ERROR_FIELDS = [
+  'sku',
+  'barcode',
+  'minThreshold',
+  'boxQuantity',
+  'boxesPerCarton',
+  'cartonPurchasePrice',
+  'cartonSellingPriceOverride',
+] as const
 
 /** ARIA props `FormField` hands to the wrapped control. */
 interface FieldControlProps {
@@ -201,10 +233,9 @@ function validate(
   const required = t('inventory.form.validation.required')
   const notANumber = t('inventory.form.validation.number')
   const negative = t('inventory.form.validation.nonNegative')
+  const positivePrice = t('inventory.form.validation.positivePrice')
 
   if (!values.name.trim()) errors.name = required
-  if (!values.category.trim()) errors.category = required
-
   // Barcode is optional, but when set it must be unique across the catalog so a
   // scanner can always resolve exactly one product.
   const barcode = values.barcode.trim()
@@ -225,6 +256,8 @@ function validate(
       errors[field] = notANumber
     } else if (number < 0) {
       errors[field] = negative
+    } else if (field === 'boxSellingPrice' && number <= 0) {
+      errors[field] = positivePrice
     } else if (
       [
         'cartonQuantity',
@@ -237,6 +270,19 @@ function validate(
       errors[field] = t('inventory.form.validation.positiveInteger')
     } else if (field === 'boxesPerCarton' && number < 1) {
       errors[field] = t('inventory.form.validation.positiveInteger')
+    }
+  }
+
+  if (values.cartonPurchasePrice.trim() !== '') {
+    const purchasePrice = parseNumber(values.cartonPurchasePrice)
+    if (Number.isNaN(purchasePrice)) {
+      errors.cartonPurchasePrice = notANumber
+    } else if (purchasePrice < 0) {
+      errors.cartonPurchasePrice = negative
+    } else if (purchasePriceExceedsSellingPrice(values)) {
+      errors.cartonPurchasePrice = t(
+        'inventory.form.validation.purchasePriceExceedsSellingPrice'
+      )
     }
   }
 
@@ -268,6 +314,8 @@ function validate(
       errors.cartonSellingPriceOverride = notANumber
     } else if (override < 0) {
       errors.cartonSellingPriceOverride = negative
+    } else if (override === 0) {
+      errors.cartonSellingPriceOverride = positivePrice
     }
   }
 
@@ -295,6 +343,8 @@ export function ProductFormModal({
   // Optional fields are progressively disclosed: collapsed on open.
   const [optionsOpen, setOptionsOpen] = useState(false)
   const derivedPrices = calculateDerivedPrices(values)
+  const hasPriceConflict = purchasePriceExceedsSellingPrice(values)
+  const extrasExpanded = optionsOpen || hasPriceConflict
 
   // Track the previous open/product combo and reset the form state whenever
   // the modal opens or the target product changes. Uses the React-recommended
@@ -315,8 +365,32 @@ export function ProductFormModal({
 
   const setField = (field: keyof ProductFormValues) => {
     return (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-      setValues(current => ({ ...current, [field]: event.target.value }))
-      setErrors(current => ({ ...current, [field]: undefined }))
+      const value = event.target.value
+      const numericValue = [
+        'cartonQuantity',
+        'boxQuantity',
+        'boxesPerCarton',
+        'cartonPurchasePrice',
+        'boxSellingPrice',
+        'cartonSellingPriceOverride',
+        'minThreshold',
+      ].includes(field)
+        ? value.replace(/^0+(?=\d)/, '')
+        : value
+      setValues(current => ({ ...current, [field]: numericValue }))
+      setErrors(current => {
+        const next = { ...current, [field]: undefined }
+        if (
+          field === 'cartonPurchasePrice' ||
+          field === 'boxSellingPrice' ||
+          field === 'cartonSellingPriceOverride'
+        ) {
+          next.cartonPurchasePrice = undefined
+          next.boxSellingPrice = undefined
+          next.cartonSellingPriceOverride = undefined
+        }
+        return next
+      })
     }
   }
 
@@ -359,7 +433,7 @@ export function ProductFormModal({
       cartonQuantity: parseNumber(values.cartonQuantity),
       boxQuantity,
       boxesPerCarton: parseNumber(values.boxesPerCarton),
-      cartonPurchasePrice: parseNumber(values.cartonPurchasePrice),
+      cartonPurchasePrice: parseNumber(values.cartonPurchasePrice) || 0,
       boxPurchasePrice: derivedPrices.boxPurchasePrice ?? 0,
       cartonSellingPrice: derivedPrices.cartonSellingPrice ?? 0,
       boxSellingPrice: parseNumber(values.boxSellingPrice),
@@ -401,13 +475,14 @@ export function ProductFormModal({
         <form
           onSubmit={handleSubmit}
           noValidate
-          className="grid gap-5 sm:grid-cols-2"
+          className="grid gap-4 sm:grid-cols-2"
         >
           <FormField
             id="product-name"
             label={t('inventory.form.name')}
             error={errors.name}
             required
+            className="sm:col-span-2"
           >
             {controlProps => (
               <Input
@@ -417,89 +492,6 @@ export function ProductFormModal({
                 onChange={setField('name')}
                 autoFocus={!product}
               />
-            )}
-          </FormField>
-
-          <FormField
-            id="product-category"
-            label={t('inventory.form.category')}
-            error={errors.category}
-            required
-          >
-            {controlProps => (
-              <Input
-                {...controlProps}
-                required
-                value={values.category}
-                onChange={setField('category')}
-              />
-            )}
-          </FormField>
-
-          {(
-            [
-              ['cartonQuantity', 'inventory.form.cartonQuantity'],
-              ['boxQuantity', 'inventory.form.boxQuantity'],
-              ['boxesPerCarton', 'inventory.form.boxesPerCarton'],
-            ] as const
-          ).map(([field, label]) => {
-            const name = field as keyof ProductFormValues
-            return (
-              <FormField
-                key={name}
-                id={`product-${name}`}
-                label={t(label)}
-                error={errors[name]}
-                required={name !== 'boxQuantity'}
-              >
-                {controlProps => (
-                  <Input
-                    {...controlProps}
-                    required={name !== 'boxQuantity'}
-                    type="number"
-                    min={name === 'boxesPerCarton' ? 1 : 0}
-                    step="1"
-                    value={values[name]}
-                    onFocus={onQtyFocus}
-                    onMouseUp={onMouseUpQty}
-                    onWheel={onWheel}
-                    onChange={setField(name)}
-                  />
-                )}
-              </FormField>
-            )
-          })}
-
-          <div className="border-border my-3 border-t pt-3 sm:col-span-2">
-            <h3 className="text-sm font-semibold">
-              {t('inventory.form.pricing')}
-            </h3>
-          </div>
-
-          <FormField
-            id="product-cartonPurchasePrice"
-            label={t('inventory.form.cartonPurchasePrice')}
-            error={errors.cartonPurchasePrice}
-            required
-          >
-            {controlProps => (
-              <div className="grid gap-2">
-                <Input
-                  {...controlProps}
-                  required
-                  inputMode="decimal"
-                  value={values.cartonPurchasePrice}
-                  onChange={setField('cartonPurchasePrice')}
-                />
-                <p aria-live="polite" className="text-muted-foreground text-xs">
-                  {t('inventory.form.boxPurchasePriceCalculated', {
-                    price:
-                      derivedPrices.boxPurchasePrice === null
-                        ? '-'
-                        : formatMoney(derivedPrices.boxPurchasePrice),
-                  })}
-                </p>
-              </div>
             )}
           </FormField>
 
@@ -516,6 +508,9 @@ export function ProductFormModal({
                   required
                   inputMode="decimal"
                   value={values.boxSellingPrice}
+                  onFocus={onQtyFocus}
+                  onMouseUp={onMouseUpQty}
+                  onWheel={onWheel}
                   onChange={setField('boxSellingPrice')}
                 />
                 <p aria-live="polite" className="text-muted-foreground text-xs">
@@ -528,63 +523,38 @@ export function ProductFormModal({
                           ),
                   })}
                 </p>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() =>
-                      setValues(current => ({
-                        ...current,
-                        cartonSellingPriceOverride:
-                          current.cartonSellingPriceOverride.trim() === ''
-                            ? String(derivedPrices.cartonSellingPrice ?? '')
-                            : '',
-                      }))
-                    }
-                  >
-                    {values.cartonSellingPriceOverride.trim() === ''
-                      ? t('inventory.form.cartonSellingOverride')
-                      : t('inventory.form.cartonSellingUseCalculated')}
-                  </Button>
-                  {values.cartonSellingPriceOverride.trim() !== '' && (
-                    <Input
-                      id="product-cartonSellingPriceOverride"
-                      aria-label={t('inventory.form.cartonSellingOverride')}
-                      aria-invalid={
-                        errors.cartonSellingPriceOverride ? true : undefined
-                      }
-                      aria-describedby={
-                        errors.cartonSellingPriceOverride
-                          ? 'product-cartonSellingPriceOverride-error'
-                          : undefined
-                      }
-                      inputMode="decimal"
-                      value={values.cartonSellingPriceOverride}
-                      onChange={setField('cartonSellingPriceOverride')}
-                      className="max-w-48"
-                    />
-                  )}
-                </div>
-                {errors.cartonSellingPriceOverride && (
-                  <p
-                    id="product-cartonSellingPriceOverride-error"
-                    role="alert"
-                    className="text-destructive text-sm"
-                  >
-                    {errors.cartonSellingPriceOverride}
-                  </p>
-                )}
               </div>
+            )}
+          </FormField>
+
+          <FormField
+            id="product-cartonQuantity"
+            label={t('inventory.form.cartonQuantity')}
+            error={errors.cartonQuantity}
+            required
+          >
+            {controlProps => (
+              <Input
+                {...controlProps}
+                required
+                type="number"
+                min={0}
+                step="1"
+                value={values.cartonQuantity}
+                onFocus={onQtyFocus}
+                onMouseUp={onMouseUpQty}
+                onWheel={onWheel}
+                onChange={setField('cartonQuantity')}
+              />
             )}
           </FormField>
 
           <CollapsibleSection
             className="border-t pt-1 sm:col-span-2"
-            open={optionsOpen}
+            open={extrasExpanded}
             onOpenChange={setOptionsOpen}
             title={
-              optionsOpen
+              extrasExpanded
                 ? t('inventory.form.options.hide')
                 : t('inventory.form.options.show')
             }
@@ -601,7 +571,131 @@ export function ProductFormModal({
               ) : undefined
             }
           >
-            <div className="grid gap-5 pt-4 sm:grid-cols-2">
+            <div className="grid gap-4 pt-4 sm:grid-cols-2">
+              <FormField
+                id="product-category"
+                label={t('inventory.form.category')}
+              >
+                {controlProps => (
+                  <Input
+                    {...controlProps}
+                    value={values.category}
+                    onChange={setField('category')}
+                  />
+                )}
+              </FormField>
+
+              <FormField
+                id="product-cartonPurchasePrice"
+                label={t('inventory.form.cartonPurchasePrice')}
+                error={
+                  hasPriceConflict
+                    ? t(
+                        'inventory.form.validation.purchasePriceExceedsSellingPrice'
+                      )
+                    : errors.cartonPurchasePrice
+                }
+              >
+                {controlProps => (
+                  <div className="grid gap-2">
+                    <Input
+                      {...controlProps}
+                      inputMode="decimal"
+                      value={values.cartonPurchasePrice}
+                      onFocus={onQtyFocus}
+                      onMouseUp={onMouseUpQty}
+                      onWheel={onWheel}
+                      onChange={setField('cartonPurchasePrice')}
+                    />
+                    <p className="text-muted-foreground text-xs">
+                      {t('inventory.form.purchasePriceOptional')}
+                    </p>
+                    <p
+                      aria-live="polite"
+                      className="text-muted-foreground text-xs"
+                    >
+                      {t('inventory.form.boxPurchasePriceCalculated', {
+                        price:
+                          derivedPrices.boxPurchasePrice === null
+                            ? '-'
+                            : formatMoney(derivedPrices.boxPurchasePrice),
+                      })}
+                    </p>
+                  </div>
+                )}
+              </FormField>
+
+              {(
+                [
+                  ['boxQuantity', 'inventory.form.boxQuantity'],
+                  ['boxesPerCarton', 'inventory.form.boxesPerCarton'],
+                ] as const
+              ).map(([field, label]) => (
+                <FormField
+                  key={field}
+                  id={`product-${field}`}
+                  label={t(label)}
+                  error={errors[field]}
+                  required={field === 'boxesPerCarton'}
+                >
+                  {controlProps => (
+                    <Input
+                      {...controlProps}
+                      required={field === 'boxesPerCarton'}
+                      type="number"
+                      min={field === 'boxesPerCarton' ? 1 : 0}
+                      step="1"
+                      value={values[field]}
+                      onFocus={onQtyFocus}
+                      onMouseUp={onMouseUpQty}
+                      onWheel={onWheel}
+                      onChange={setField(field)}
+                    />
+                  )}
+                </FormField>
+              ))}
+
+              <div className="grid gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="justify-self-start"
+                  onClick={() =>
+                    setValues(current => ({
+                      ...current,
+                      cartonSellingPriceOverride:
+                        current.cartonSellingPriceOverride.trim() === ''
+                          ? String(derivedPrices.cartonSellingPrice ?? '')
+                          : '',
+                    }))
+                  }
+                >
+                  {values.cartonSellingPriceOverride.trim() === ''
+                    ? t('inventory.form.cartonSellingOverride')
+                    : t('inventory.form.cartonSellingUseCalculated')}
+                </Button>
+                {values.cartonSellingPriceOverride.trim() !== '' && (
+                  <FormField
+                    id="product-cartonSellingPriceOverride"
+                    label={t('inventory.form.cartonSellingPrice')}
+                    error={errors.cartonSellingPriceOverride}
+                  >
+                    {controlProps => (
+                      <Input
+                        {...controlProps}
+                        inputMode="decimal"
+                        value={values.cartonSellingPriceOverride}
+                        onFocus={onQtyFocus}
+                        onMouseUp={onMouseUpQty}
+                        onWheel={onWheel}
+                        onChange={setField('cartonSellingPriceOverride')}
+                      />
+                    )}
+                  </FormField>
+                )}
+              </div>
+
               <FormField
                 id="product-min-threshold"
                 label={t('inventory.form.minThreshold')}
@@ -688,7 +782,7 @@ export function ProductFormModal({
             >
               {t('common.cancel')}
             </Button>
-            <Button type="submit">
+            <Button type="submit" disabled={hasPriceConflict}>
               {product ? <Save /> : <PackagePlus />}
               {product ? t('inventory.form.save') : t('inventory.form.create')}
             </Button>

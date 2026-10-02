@@ -35,13 +35,13 @@ function isOverNativeSpinner(
 
 export function useAutoSelectOnFocus() {
   /**
-   * عند التركيز على الحقل: نحدد المحتوى بالكامل بعد إطار واحد
-   * لضمان تطبيق التحديد حتى لو قام المتصفح بإلغائه.
+   * نحدد المحتوى فوراً كي تستبدل الكتابة القيمة الحالية، ثم نعيد
+   * التحديد بعد إطار لضمان تطبيقه حتى لو ألغاه المتصفح.
    */
   const onFocus = (event: React.FocusEvent<HTMLInputElement>) => {
     const input = event.target
-    // تأخير قصير لضبط التحديد بعد أي معالجة افتراضية من المتصفح
     const valueAtFocus = input.value
+    input.select()
     requestAnimationFrame(() => {
       // لا تحدد إذا انتقل التركيز لحقل آخر، أو إذا تغيّرت القيمة بين
       // التركيز وهذا الإطار (كتابة سريعة) — لا يجوز مسح ما كتبه المستخدم.
